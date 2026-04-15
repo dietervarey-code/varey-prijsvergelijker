@@ -37,55 +37,52 @@ st.divider()
 # FUNCTIES
 # ============================================
 def load_file(uploaded_file):
-    """Laad CSV of Excel bestand"""
+    """Laad CSV of Excel bestand - ALLES als tekst om voorloopnullen te behouden"""
     if uploaded_file is None:
         return None
     
     try:
         if uploaded_file.name.endswith('.csv'):
-            # Probeer verschillende encodings en separators
+            # CSV: laad alles als string
             try:
-                df = pd.read_csv(uploaded_file, sep=None, engine='python')
+                df = pd.read_csv(uploaded_file, sep=None, engine='python', dtype=str, keep_default_na=False)
             except:
                 uploaded_file.seek(0)
                 try:
-                    df = pd.read_csv(uploaded_file, encoding='latin-1', sep=None, engine='python')
+                    df = pd.read_csv(uploaded_file, encoding='latin-1', sep=None, engine='python', dtype=str, keep_default_na=False)
                 except:
                     uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, encoding='cp1252', sep=';')
+                    df = pd.read_csv(uploaded_file, encoding='cp1252', sep=';', dtype=str, keep_default_na=False)
         else:
-            # Excel bestanden - probeer verschillende methodes
+            # Excel: laad alles als string
             try:
-                # Eerste poging: standaard laden
-                df = pd.read_excel(uploaded_file, engine='openpyxl')
+                df = pd.read_excel(uploaded_file, engine='openpyxl', dtype=str, keep_default_na=False)
             except:
                 uploaded_file.seek(0)
                 try:
-                    # Tweede poging: zonder opmaak te laden (data_only)
                     from openpyxl import load_workbook
                     wb = load_workbook(uploaded_file, data_only=True, read_only=True)
                     ws = wb.active
                     data = list(ws.values)
                     if data:
                         headers = data[0]
-                        df = pd.DataFrame(data[1:], columns=headers)
+                        rows = []
+                        for row in data[1:]:
+                            rows.append([str(cell) if cell is not None else '' for cell in row])
+                        df = pd.DataFrame(rows, columns=headers)
                     else:
                         df = pd.DataFrame()
                     wb.close()
                 except:
                     uploaded_file.seek(0)
                     try:
-                        # Derde poging: xlrd engine voor oudere .xls bestanden
-                        df = pd.read_excel(uploaded_file, engine='xlrd')
+                        df = pd.read_excel(uploaded_file, engine='xlrd', dtype=str, keep_default_na=False)
                     except:
                         uploaded_file.seek(0)
-                        # Laatste poging: calamine engine
-                        df = pd.read_excel(uploaded_file, engine='calamine')
+                        df = pd.read_excel(uploaded_file, engine='calamine', dtype=str, keep_default_na=False)
         
         # Verwijder volledig lege rijen en kolommen
         df = df.dropna(how='all').dropna(axis=1, how='all')
-        
-        # Reset index
         df = df.reset_index(drop=True)
         
         return df
@@ -93,6 +90,41 @@ def load_file(uploaded_file):
     except Exception as e:
         st.error(f"Fout bij laden: {e}")
         return None
+
+def clean_article_number(value):
+    """
+    Maak artikelnummer schoon voor matching:
+    - Verwijder spaties
+    - Verwijder .0 suffix (Excel float probleem)
+    - Verwijder duizendtallen-separators (komma's en punten in verkeerde context)
+    - Behoud voorloopnullen
+    """
+    if pd.isna(value) or value is None:
+        return ''
+    
+    # Naar string
+    s = str(value).strip()
+    
+    # Verwijder .0 aan het einde (Excel float probleem: 118910 -> 118910.0)
+    if s.endswith('.0'):
+        s = s[:-2]
+    
+    # Als het een getal is met duizendtallen-komma (Amerikaanse notatie): 118,910 -> 118910
+    # Maar pas op: niet doen als er een punt in zit (dan kan het een decimaal zijn)
+    if ',' in s and '.' not in s:
+        # Check of het een duizendtallen-komma is (alleen cijfers en komma's)
+        test = s.replace(',', '')
+        if test.isdigit():
+            s = test
+    
+    # Europese duizendtallen-punt: 118.910 -> 118910 (als geen komma aanwezig)
+    if '.' in s and ',' not in s:
+        test = s.replace('.', '')
+        if test.isdigit() and len(s.split('.')[-1]) == 3:
+            # Waarschijnlijk duizendtallen-punt
+            s = test
+    
+    return s
 
 def convert_to_excel(df):
     """Converteer DataFrame naar Excel voor download"""
@@ -222,26 +254,78 @@ if own_df is not None and supplier_df is not None:
         
         with st.spinner("Bezig met vergelijken..."):
             
-            # Maak kopieën en bereid data voor
             own_data = own_df.copy()
             supplier_data = supplier_df.copy()
             
-            # Converteer artikelnummers naar string voor matching
-            own_data['_match_key'] = own_data[own_article_col].astype(str).str.strip().str.upper()
-            supplier_data['_match_key'] = supplier_data[supplier_article_col].astype(str).str.strip().str.upper()
+            # ============================================
+            # ARTIKELNUMMER MATCHING - ROBUUST
+            # ============================================
             
-            # Converteer prijzen naar numeriek
-            own_data['_own_price'] = pd.to_numeric(
-                own_data[own_price_col].astype(str).str.replace(',', '.').str.replace('€', '').str.strip(),
-                errors='coerce'
-            )
-            supplier_data['_supplier_price'] = pd.to_numeric(
-                supplier_data[supplier_price_col].astype(str).str.replace(',', '.').str.replace('€', '').str.strip(),
-                errors='coerce'
-            )
+            # Clean article numbers voor matching
+            own_data['_match_key'] = own_data[own_article_col].apply(clean_article_number)
+            supplier_data['_match_key'] = supplier_data[supplier_article_col].apply(clean_article_number)
             
-            # Selecteer relevante kolommen van leverancier
-            supplier_subset = supplier_data[['_match_key', '_supplier_price']].drop_duplicates(subset='_match_key')
+            # Debug info tonen
+            with st.expander("🔧 Debug: Bekijk match keys"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Uw bestand (eerste 10):**")
+                    st.write(own_data[[own_article_col, '_match_key']].head(10))
+                with col2:
+                    st.write("**Leverancier (eerste 10):**")
+                    st.write(supplier_data[[supplier_article_col, '_match_key']].head(10))
+            
+            # ============================================
+            # PRIJS CONVERSIE - ROBUUST
+            # ============================================
+            
+            def clean_price(value):
+                """Converteer prijs naar float, ongeacht formaat"""
+                if pd.isna(value) or value is None or str(value).strip() == '':
+                    return None
+                
+                s = str(value).strip()
+                
+                # Verwijder valuta symbolen en spaties
+                s = s.replace('€', '').replace('$', '').replace(' ', '')
+                
+                # Bepaal decimaal separator
+                # Als beide . en , aanwezig: laatste is decimaal
+                if '.' in s and ',' in s:
+                    if s.rfind('.') > s.rfind(','):
+                        # Punt is decimaal (1,234.56)
+                        s = s.replace(',', '')
+                    else:
+                        # Komma is decimaal (1.234,56)
+                        s = s.replace('.', '').replace(',', '.')
+                elif ',' in s:
+                    # Alleen komma: check of het decimaal is
+                    # Als er 3 cijfers na de komma zijn, is het waarschijnlijk duizendtallen
+                    parts = s.split(',')
+                    if len(parts) == 2 and len(parts[1]) == 3 and parts[0].replace('.', '').isdigit():
+                        # Duizendtallen komma: 1,234 -> 1234
+                        s = s.replace(',', '')
+                    else:
+                        # Decimaal komma: 12,34 -> 12.34
+                        s = s.replace(',', '.')
+                
+                try:
+                    return float(s)
+                except:
+                    return None
+            
+            own_data['_own_price'] = own_data[own_price_col].apply(clean_price)
+            supplier_data['_supplier_price'] = supplier_data[supplier_price_col].apply(clean_price)
+            
+            # ============================================
+            # MATCHING
+            # ============================================
+            
+            # Verwijder lege match keys
+            supplier_data_clean = supplier_data[supplier_data['_match_key'] != ''].copy()
+            
+            # Selecteer relevante kolommen van leverancier (neem eerste bij duplicaten)
+            supplier_subset = supplier_data_clean[['_match_key', '_supplier_price']].drop_duplicates(subset='_match_key', keep='first')
             
             # Merge datasets
             result = own_data.merge(
@@ -250,13 +334,17 @@ if own_df is not None and supplier_df is not None:
                 how='left'
             )
             
-            # Bereken verschil
+            # ============================================
+            # BEREKENINGEN
+            # ============================================
+            
             result['Verschil €'] = result['_supplier_price'] - result['_own_price']
             result['Verschil %'] = ((result['_supplier_price'] - result['_own_price']) / result['_own_price'] * 100).round(2)
             
-            # Categoriseer
             def categorize(row):
                 if pd.isna(row['_supplier_price']):
+                    return '⚠️ Niet gevonden'
+                elif pd.isna(row['Verschil €']):
                     return '⚠️ Niet gevonden'
                 elif row['Verschil €'] > 0.01:
                     return '🔴 Prijsverhoging'
@@ -267,7 +355,10 @@ if own_df is not None and supplier_df is not None:
             
             result['Status'] = result.apply(categorize, axis=1)
             
-            # Maak nette output
+            # ============================================
+            # OUTPUT VOORBEREIDEN
+            # ============================================
+            
             output_cols = [own_article_col] + own_extra_cols + [own_price_col]
             
             final_result = result[output_cols + ['_supplier_price', 'Verschil €', 'Verschil %', 'Status']].copy()
@@ -275,7 +366,7 @@ if own_df is not None and supplier_df is not None:
                 'Huidige prijs', 'Nieuwe prijs', 'Verschil €', 'Verschil %', 'Status'
             ]
             
-            # Sla resultaat op in session state voor later gebruik
+            # Sla op in session state
             st.session_state['final_result'] = final_result
             st.session_state['result_stats'] = {
                 'total_matched': result['_supplier_price'].notna().sum(),
@@ -348,16 +439,47 @@ if 'final_result' in st.session_state:
     st.info(f"📋 {len(display_df)} artikelen gevonden met huidige filter")
     
     # Toon tabel
+    # Forceer artikelnummer als tekst in weergave
+    display_df_styled = display_df.copy()
+    
+    # Alle kolommen behalve prijs-kolommen als tekst behandelen
+    col_config = {
+        "Huidige prijs": st.column_config.NumberColumn(format="€ %.2f"),
+        "Nieuwe prijs": st.column_config.NumberColumn(format="€ %.2f"),
+        "Verschil €": st.column_config.NumberColumn(format="€ %.2f"),
+        "Verschil %": st.column_config.NumberColumn(format="%.2f %%"),
+    }
+    
+    # Eerste kolom (artikelnummer) als tekst
+    first_col = display_df.columns[0]
+    col_config[first_col] = st.column_config.TextColumn(first_col)
+    
+    # Extra kolommen ook als tekst
+    for col in own_extra_cols:
+        if col in display_df.columns:
+            col_config[col] = st.column_config.TextColumn(col)
+    
     st.dataframe(
-        display_df,
+        display_df_styled,
         use_container_width=True,
         height=400,
-        column_config={
-            "Huidige prijs": st.column_config.NumberColumn(format="€ %.2f"),
-            "Nieuwe prijs": st.column_config.NumberColumn(format="€ %.2f"),
-            "Verschil €": st.column_config.NumberColumn(format="€ %.2f"),
-            "Verschil %": st.column_config.NumberColumn(format="%.2f %%"),
-        }
+        column_config=col_config
+    )
+    
+    # Eerste kolom (artikelnummer) als tekst
+    first_col = display_df.columns[0]
+    col_config[first_col] = st.column_config.TextColumn(first_col)
+    
+    # Extra kolommen ook als tekst
+    for col in own_extra_cols:
+        if col in display_df.columns:
+            col_config[col] = st.column_config.TextColumn(col)
+    
+    st.dataframe(
+        display_df_styled,
+        use_container_width=True,
+        height=400,
+        column_config=col_config
     )
     
     st.divider()
