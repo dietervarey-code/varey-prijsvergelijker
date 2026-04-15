@@ -43,15 +43,53 @@ def load_file(uploaded_file):
     
     try:
         if uploaded_file.name.endswith('.csv'):
-            # Probeer verschillende encodings
+            # Probeer verschillende encodings en separators
             try:
                 df = pd.read_csv(uploaded_file, sep=None, engine='python')
             except:
                 uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, encoding='latin-1', sep=None, engine='python')
+                try:
+                    df = pd.read_csv(uploaded_file, encoding='latin-1', sep=None, engine='python')
+                except:
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(uploaded_file, encoding='cp1252', sep=';')
         else:
-            df = pd.read_excel(uploaded_file)
+            # Excel bestanden - probeer verschillende methodes
+            try:
+                # Eerste poging: standaard laden
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+            except:
+                uploaded_file.seek(0)
+                try:
+                    # Tweede poging: zonder opmaak te laden (data_only)
+                    from openpyxl import load_workbook
+                    wb = load_workbook(uploaded_file, data_only=True, read_only=True)
+                    ws = wb.active
+                    data = list(ws.values)
+                    if data:
+                        headers = data[0]
+                        df = pd.DataFrame(data[1:], columns=headers)
+                    else:
+                        df = pd.DataFrame()
+                    wb.close()
+                except:
+                    uploaded_file.seek(0)
+                    try:
+                        # Derde poging: xlrd engine voor oudere .xls bestanden
+                        df = pd.read_excel(uploaded_file, engine='xlrd')
+                    except:
+                        uploaded_file.seek(0)
+                        # Laatste poging: calamine engine
+                        df = pd.read_excel(uploaded_file, engine='calamine')
+        
+        # Verwijder volledig lege rijen en kolommen
+        df = df.dropna(how='all').dropna(axis=1, how='all')
+        
+        # Reset index
+        df = df.reset_index(drop=True)
+        
         return df
+    
     except Exception as e:
         st.error(f"Fout bij laden: {e}")
         return None
