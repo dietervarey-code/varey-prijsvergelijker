@@ -244,7 +244,12 @@ if own_df is not None and supplier_df is not None:
             options=supplier_df.columns,
             key="supplier_price"
         )
-
+        # Extra kolommen van leverancier meenemen
+        supplier_extra_cols = st.multiselect(
+            "Extra kolommen meenemen (optioneel):",
+            options=[c for c in supplier_df.columns if c not in [supplier_article_col, supplier_price_col]],
+            key="supplier_extra"
+        )
     # ============================================
     # STAP 3: VERGELIJKEN
     # ============================================
@@ -325,7 +330,8 @@ if own_df is not None and supplier_df is not None:
             supplier_data_clean = supplier_data[supplier_data['_match_key'] != ''].copy()
             
             # Selecteer relevante kolommen van leverancier (neem eerste bij duplicaten)
-            supplier_subset = supplier_data_clean[['_match_key', '_supplier_price']].drop_duplicates(subset='_match_key', keep='first')
+            supplier_cols_to_keep = ['_match_key', '_supplier_price'] + supplier_extra_cols
+            supplier_subset = supplier_data_clean[supplier_cols_to_keep].drop_duplicates(subset='_match_key', keep='first')
             
             # Merge datasets
             result = own_data.merge(
@@ -361,10 +367,13 @@ if own_df is not None and supplier_df is not None:
             
             output_cols = [own_article_col] + own_extra_cols + [own_price_col]
             
-            final_result = result[output_cols + ['_supplier_price', 'Verschil €', 'Verschil %', 'Status']].copy()
-            final_result.columns = [own_article_col] + own_extra_cols + [
-                'Huidige prijs', 'Nieuwe prijs', 'Verschil €', 'Verschil %', 'Status'
-            ]
+            # Voeg leverancier extra kolommen toe
+            result_cols = output_cols + ['_supplier_price'] + supplier_extra_cols + ['Verschil €', 'Verschil %', 'Status']
+            final_result = result[result_cols].copy()
+            
+            # Hernoem kolommen
+            new_col_names = [own_article_col] + own_extra_cols + ['Huidige prijs', 'Nieuwe prijs'] + supplier_extra_cols + ['Verschil €', 'Verschil %', 'Status']
+            final_result.columns = new_col_names
             
             # Sla op in session state
             st.session_state['final_result'] = final_result
@@ -377,7 +386,30 @@ if own_df is not None and supplier_df is not None:
                 'total_increase': result[result['Verschil €'] > 0]['Verschil €'].sum(),
                 'total_decrease': result[result['Verschil €'] < 0]['Verschil €'].sum()
             }
-
+            # Bewaar voor exports
+            st.session_state['supplier_extra_cols'] = supplier_extra_cols
+            st.session_state['own_extra_cols'] = own_extra_cols
+            
+            # ============================================
+            # NIET-GEMATCHTE ARTIKELEN VERZAMELEN
+            # ============================================
+            
+            # Artikelen bij leverancier die NIET bij ons voorkomen
+            matched_supplier_keys = set(result[result['_supplier_price'].notna()]['_match_key'])
+            all_supplier_keys = set(supplier_data_clean['_match_key'])
+            unmatched_supplier_keys = all_supplier_keys - matched_supplier_keys
+            
+            supplier_not_found = supplier_data_clean[supplier_data_clean['_match_key'].isin(unmatched_supplier_keys)].copy()
+            # Selecteer originele kolommen voor export
+            supplier_not_found_export_cols = [supplier_article_col, supplier_price_col] + supplier_extra_cols
+            supplier_not_found_export = supplier_not_found[supplier_not_found_export_cols].copy()
+            st.session_state['supplier_not_found'] = supplier_not_found_export
+            
+            # Artikelen bij ons die NIET bij leverancier voorkomen
+            own_not_found = result[result['_supplier_price'].isna()].copy()
+            own_not_found_export_cols = [own_article_col] + own_extra_cols + [own_price_col]
+            own_not_found_export = own_not_found[own_not_found_export_cols].copy()
+            st.session_state['own_not_found'] = own_not_found_export
 # ============================================
 # RESULTATEN TONEN
 # ============================================
@@ -454,10 +486,16 @@ if 'final_result' in st.session_state:
     first_col = display_df.columns[0]
     col_config[first_col] = st.column_config.TextColumn(first_col)
     
-    # Extra kolommen ook als tekst
+    # Extra kolommen ook als tekst (eigen bestand)
     for col in own_extra_cols:
         if col in display_df.columns:
             col_config[col] = st.column_config.TextColumn(col)
+    
+    # Extra kolommen van leverancier ook als tekst
+    if 'supplier_extra_cols' in st.session_state:
+        for col in st.session_state['supplier_extra_cols']:
+            if col in display_df.columns:
+                col_config[col] = st.column_config.TextColumn(col)
     
     st.dataframe(
         display_df_styled,
@@ -489,6 +527,8 @@ if 'final_result' in st.session_state:
     # ============================================
     st.subheader("📥 Exporteren")
     
+    # Rij 1: Standaard exports
+    st.markdown("**📊 Vergelijkingsresultaten:**")
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -500,7 +540,6 @@ if 'final_result' in st.session_state:
         )
     
     with col2:
-        # Alleen wijzigingen
         changes_only = final_result[final_result['Status'].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])]
         st.download_button(
             label="📥 Alleen wijzigingen (Excel)",
@@ -516,5 +555,47 @@ if 'final_result' in st.session_state:
             file_name="prijsvergelijking.csv",
             mime="text/csv"
         )
+    
+    # Rij 2: Niet-gevonden exports
+    st.divider()
+    st.markdown("**🔍 Niet-gematchte artikelen:**")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Onze artikelen niet gevonden bij leverancier
+        if 'own_not_found' in st.session_state:
+            own_not_found = st.session_state['own_not_found']
+            st.metric("Onze artikelen niet bij leverancier", len(own_not_found))
+            
+            if len(own_not_found) > 0:
+                with st.expander("👀 Bekijk lijst"):
+                    st.dataframe(own_not_found.head(20), use_container_width=True)
+                
+                st.download_button(
+                    label="📥 Export: Onze artikelen NIET bij leverancier",
+                    data=convert_to_excel(own_not_found),
+                    file_name="onze_artikelen_niet_bij_leverancier.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_own_not_found"
+                )
+    
+    with col2:
+        # Leverancier artikelen niet gevonden bij ons
+        if 'supplier_not_found' in st.session_state:
+            supplier_not_found = st.session_state['supplier_not_found']
+            st.metric("Leverancier artikelen niet bij ons", len(supplier_not_found))
+            
+            if len(supplier_not_found) > 0:
+                with st.expander("👀 Bekijk lijst"):
+                    st.dataframe(supplier_not_found.head(20), use_container_width=True)
+                
+                st.download_button(
+                    label="📥 Export: Leverancier artikelen NIET bij ons",
+                    data=convert_to_excel(supplier_not_found),
+                    file_name="leverancier_artikelen_niet_bij_ons.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_supplier_not_found"
+                )
     
     # ============================================
