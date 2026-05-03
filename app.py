@@ -407,14 +407,33 @@ if own_df is not None and supplier_df is not None:
             final_result = result[result_cols].copy()
             
             # Bouw nieuwe kolomnamen op - MOET EXACT EVENVEEL ZIJN
+            # Hernoem berekende Status kolom naar iets unieks om conflicten te voorkomen
             new_col_names = (
                 [own_article_col] +                    # Artikelnummer (behoud originele naam)
                 own_extra_cols +                       # Extra kolommen eigen bestand
                 ['Huidige prijs'] +                    # Eigen prijs hernoemd
                 ['Nieuwe prijs'] +                     # Leverancier prijs hernoemd
                 supplier_extra_cols +                  # Extra kolommen leverancier
-                ['Verschil €', 'Verschil %', 'Status'] # Berekende kolommen
+                ['Verschil €', 'Verschil %', 'Prijsstatus']  # Berekende kolommen - hernoemd naar Prijsstatus
             )
+            
+            # ============================================
+            # DUPLICATE KOLOMNAMEN OPLOSSEN
+            # ============================================
+            
+            # Tel hoe vaak elke naam voorkomt en maak uniek
+            seen = {}
+            unique_col_names = []
+            for name in new_col_names:
+                if name in seen:
+                    seen[name] += 1
+                    unique_name = f"{name}_{seen[name]}"
+                    unique_col_names.append(unique_name)
+                else:
+                    seen[name] = 0
+                    unique_col_names.append(name)
+            
+            new_col_names = unique_col_names
             
             # Debug check
             if len(result_cols) != len(new_col_names):
@@ -489,6 +508,9 @@ if 'final_result' in st.session_state:
     
     st.divider()
     
+    # Bepaal welke kolom de prijsstatus is (kan 'Status' of 'Prijsstatus' zijn)
+    status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
+    
     # Filter opties
     filter_option = st.selectbox(
         "Toon:",
@@ -503,20 +525,21 @@ if 'final_result' in st.session_state:
     
     # Filter toepassen
     if filter_option == "🔴 Alleen prijsverhogingen":
-        display_df = final_result[final_result['Status'] == '🔴 Prijsverhoging'].copy()
+        display_df = final_result[final_result[status_col] == '🔴 Prijsverhoging'].copy()
     elif filter_option == "🟢 Alleen prijsverlagingen":
-        display_df = final_result[final_result['Status'] == '🟢 Prijsverlaging'].copy()
+        display_df = final_result[final_result[status_col] == '🟢 Prijsverlaging'].copy()
     elif filter_option == "🔴🟢 Alle wijzigingen":
-        display_df = final_result[final_result['Status'].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])].copy()
+        display_df = final_result[final_result[status_col].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])].copy()
     elif filter_option == "⚠️ Niet gevonden":
-        display_df = final_result[final_result['Status'] == '⚠️ Niet gevonden'].copy()
+        display_df = final_result[final_result[status_col] == '⚠️ Niet gevonden'].copy()
     else:
         display_df = final_result.copy()
     
-    # Sorteer opties
+    # Sorteer opties - gebruik dynamische status kolom
+    sort_options = ['Verschil €', 'Verschil %', 'Huidige prijs', 'Nieuwe prijs', status_col]
     sort_col = st.selectbox(
         "Sorteer op:",
-        options=['Verschil €', 'Verschil %', 'Huidige prijs', 'Nieuwe prijs', 'Status'],
+        options=sort_options,
         index=0
     )
     sort_order = st.radio("Volgorde:", ['Aflopend', 'Oplopend'], horizontal=True)
@@ -584,7 +607,7 @@ if 'final_result' in st.session_state:
         )
     
     with col2:
-        changes_only = final_result[final_result['Status'].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])]
+        changes_only = final_result[final_result[status_col].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])]
         st.download_button(
             label="📥 Alleen wijzigingen (Excel)",
             data=convert_to_excel(changes_only),
