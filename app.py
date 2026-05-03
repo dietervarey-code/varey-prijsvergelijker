@@ -81,9 +81,46 @@ def load_file(uploaded_file):
                         uploaded_file.seek(0)
                         df = pd.read_excel(uploaded_file, engine='calamine', dtype=str, keep_default_na=False)
         
+        # ============================================
+        # KOLOMNAMEN OPSCHONEN
+        # ============================================
+        
+        # Verwijder BOM en andere onzichtbare karakters uit kolomnamen
+        def clean_column_name(col):
+            if col is None:
+                return 'unnamed'
+            col = str(col)
+            # Verwijder BOM (Byte Order Mark)
+            col = col.replace('\ufeff', '')
+            # Verwijder andere onzichtbare karakters
+            col = col.replace('\u200b', '')  # Zero-width space
+            col = col.replace('\xa0', ' ')   # Non-breaking space -> normale spatie
+            # Strip whitespace
+            col = col.strip()
+            return col if col else 'unnamed'
+        
+        df.columns = [clean_column_name(c) for c in df.columns]
+        
         # Verwijder volledig lege rijen en kolommen
         df = df.dropna(how='all').dropna(axis=1, how='all')
         df = df.reset_index(drop=True)
+        
+        # ============================================
+        # DUPLICATE KOLOMNAMEN OPLOSSEN IN BRON
+        # ============================================
+        
+        # Als er duplicate kolomnamen zijn, maak ze uniek
+        cols = df.columns.tolist()
+        seen = {}
+        new_cols = []
+        for col in cols:
+            if col in seen:
+                seen[col] += 1
+                new_cols.append(f"{col}_{seen[col]}")
+            else:
+                seen[col] = 0
+                new_cols.append(col)
+        df.columns = new_cols
         
         return df
     
