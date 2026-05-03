@@ -709,5 +709,609 @@ if 'final_result' in st.session_state:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_supplier_not_found"
                 )
+
+    # ============================================
+    # STAP 4: PUSH NAAR PRIORITY
+    # ============================================
+    st.divider()
+    st.header("🚀 Stap 4: Push naar Priority ERP")
+    
+    # Check of er data is om te pushen
+    if 'final_result' not in st.session_state:
+        st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
+        st.stop()
+    
+    final_result = st.session_state['final_result']
+    status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
+    
+    # ============================================
+    # 4.1 KOLOM MAPPING
+    # ============================================
+    st.subheader("📋 Kolom Mapping")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Priority ID kolom selectie
+        priority_id_candidates = [c for c in final_result.columns if 'priority' in c.lower() or 'id' in c.lower()]
+        default_priority_id = priority_id_candidates[0] if priority_id_candidates else final_result.columns[0]
+        
+        priority_id_col = st.selectbox(
+            "Kolom met Priority ID:",
+            options=final_result.columns.tolist(),
+            index=final_result.columns.tolist().index(default_priority_id) if default_priority_id in final_result.columns else 0,
+            key="priority_id_col",
+            help="Deze kolom moet overeenkomen met PART (ID) in LOGPART"
+        )
+    
+    with col2:
+        # Nieuwe prijs kolom selectie
+        price_candidates = [c for c in final_result.columns if 'prijs' in c.lower() or 'price' in c.lower()]
+        default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
+        
+        new_price_col = st.selectbox(
+            "Kolom met nieuwe prijs:",
+            options=final_result.columns.tolist(),
+            index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
+            key="new_price_col",
+            help="Deze waarde wordt naar BASEPLPRICE gestuurd"
+        )
+    
+    # ============================================
+    # 4.2 FILTER SELECTIE
+    # ============================================
+    st.subheader("📊 Welke artikelen pushen?")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="include_increases")
+    with col2:
+        include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="include_decreases")
+    with col3:
+        include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="include_unchanged")
+    
+    # Filter data op basis van selectie
+    selected_statuses = []
+    if include_increases:
+        selected_statuses.append('🔴 Prijsverhoging')
+    if include_decreases:
+        selected_statuses.append('🟢 Prijsverlaging')
+    if include_unchanged:
+        selected_statuses.append('⚪ Ongewijzigd')
+    
+    if not selected_statuses:
+        st.warning("⚠️ Selecteer minimaal één categorie om te pushen.")
+        st.stop()
+    
+    # Filter op status EN priority_id moet gevuld zijn
+    push_df = final_result[
+        (final_result[status_col].isin(selected_statuses)) &
+        (final_result[priority_id_col].notna()) &
+        (final_result[priority_id_col].astype(str).str.strip() != '') &
+        (final_result[priority_id_col].astype(str).str.lower() != 'nan')
+    ].copy()
+    
+    st.info(f"📋 {len(push_df)} artikelen geselecteerd met geldige Priority ID")
+    
+    if len(push_df) == 0:
+        st.warning("⚠️ Geen artikelen gevonden met geldige Priority ID in de geselecteerde categorieën.")
+        st.stop()
+    
+    # ============================================
+    # 4.3 MARK-UP OPTIES
+    # ============================================
+    st.subheader("💰 Prijsaanpassing (Mark-up)")
+    
+    markup_type = st.radio(
+        "Mark-up type:",
+        options=["Geen mark-up", "Percentage (%)", "Vast bedrag (€)"],
+        horizontal=True,
+        key="markup_type"
+    )
+    
+    # Mark-up waarde en scope
+    if markup_type != "Geen mark-up":
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if markup_type == "Percentage (%)":
+                markup_value = st.number_input(
+                    "Mark-up percentage:",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=5.0,
+                    step=0.5,
+                    key="markup_pct",
+                    help="Bv. 5 voor 5% verhoging"
+                )
+            else:
+                markup_value = st.number_input(
+                    "Mark-up bedrag (€):",
+                    min_value=0.0,
+                    value=10.0,
+                    step=1.0,
+                    key="markup_fixed",
+                    help="Vast bedrag dat wordt opgeteld"
+                )
+        
+        with col2:
+            markup_scope = st.radio(
+                "Toepassen op:",
+                options=["Alle artikelen", "Per artikelgroep", "Handmatig selecteren"],
+                key="markup_scope"
+            )
+        
+        # Per artikelgroep configuratie
+        group_markups = {}
+        if markup_scope == "Per artikelgroep":
+            # Selecteer groepkolom
+            group_col_candidates = [c for c in final_result.columns if 'group' in c.lower() or 'family' in c.lower() or 'categor' in c.lower()]
+            
+            group_col = st.selectbox(
+                "Groepeer op kolom:",
+                options=final_result.columns.tolist(),
+                index=final_result.columns.tolist().index(group_col_candidates[0]) if group_col_candidates else 0,
+                key="group_col"
+            )
+            
+            # Toon unieke groepen met mark-up input
+            unique_groups = push_df[group_col].dropna().unique()
+            
+            if len(unique_groups) > 0 and len(unique_groups) <= 50:
+                st.write("**Mark-up per groep:**")
+                
+                # Maak 3 kolommen voor compactere weergave
+                cols = st.columns(3)
+                for idx, group in enumerate(sorted(unique_groups)):
+                    with cols[idx % 3]:
+                        if markup_type == "Percentage (%)":
+                            group_markups[group] = st.number_input(
+                                f"{group}",
+                                min_value=0.0,
+                                max_value=100.0,
+                                value=markup_value,
+                                step=0.5,
+                                key=f"group_markup_{idx}",
+                                label_visibility="visible"
+                            )
+                        else:
+                            group_markups[group] = st.number_input(
+                                f"{group}",
+                                min_value=0.0,
+                                value=markup_value,
+                                step=1.0,
+                                key=f"group_markup_{idx}",
+                                label_visibility="visible"
+                            )
+            elif len(unique_groups) > 50:
+                st.warning(f"⚠️ Te veel groepen ({len(unique_groups)}). Gebruik 'Alle artikelen' of 'Handmatig selecteren'.")
+                markup_scope = "Alle artikelen"
+        
+        # Handmatige selectie
+        if markup_scope == "Handmatig selecteren":
+            st.write("**Selecteer artikelen voor mark-up:**")
+            
+            # Voeg selectie kolom toe
+            push_df['_apply_markup'] = False
+            
+            edited_df = st.data_editor(
+                push_df[[priority_id_col, new_price_col, status_col, '_apply_markup']].head(100),
+                column_config={
+                    "_apply_markup": st.column_config.CheckboxColumn(
+                        "Mark-up?",
+                        help="Vink aan om mark-up toe te passen",
+                        default=False
+                    )
+                },
+                disabled=[priority_id_col, new_price_col, status_col],
+                hide_index=True,
+                key="markup_selection"
+            )
+            
+            # Update push_df met selecties
+            selected_for_markup = edited_df[edited_df['_apply_markup'] == True][priority_id_col].tolist()
+            st.info(f"✅ {len(selected_for_markup)} artikelen geselecteerd voor mark-up")
+    
+    # ============================================
+    # 4.4 BEREKEN FINALE PRIJZEN
+    # ============================================
+    
+    def calculate_final_price(row):
+        """Bereken finale prijs inclusief eventuele mark-up"""
+        try:
+            base_price = float(str(row[new_price_col]).replace(',', '.').replace('€', '').strip())
+        except (ValueError, TypeError):
+            return None
+        
+        if markup_type == "Geen mark-up":
+            return round(base_price, 2)
+        
+        # Bepaal mark-up voor dit artikel
+        if markup_scope == "Alle artikelen":
+            applied_markup = markup_value
+        elif markup_scope == "Per artikelgroep":
+            group = row.get(group_col, None)
+            applied_markup = group_markups.get(group, 0)
+        elif markup_scope == "Handmatig selecteren":
+            if row[priority_id_col] in selected_for_markup:
+                applied_markup = markup_value
+            else:
+                applied_markup = 0
+        else:
+            applied_markup = 0
+        
+        # Bereken finale prijs
+        if markup_type == "Percentage (%)":
+            final_price = base_price * (1 + applied_markup / 100)
+        else:  # Vast bedrag
+            final_price = base_price + applied_markup
+        
+        return round(final_price, 2)
+    
+    # Bereken finale prijzen
+    push_df['_final_price'] = push_df.apply(calculate_final_price, axis=1)
+    
+    # Verwijder rijen zonder geldige prijs
+    push_df = push_df[push_df['_final_price'].notna()].copy()
+    
+    # ============================================
+    # 4.5 PREVIEW
+    # ============================================
+    st.subheader("👁️ Preview")
+    
+    # Toon preview tabel
+    preview_cols = [priority_id_col, new_price_col]
+    if markup_type != "Geen mark-up":
+        preview_cols.append('_final_price')
+    preview_cols.append(status_col)
+    
+    preview_df = push_df[preview_cols].copy()
+    preview_df.columns = [c if c != '_final_price' else 'Finale prijs (na mark-up)' for c in preview_df.columns]
+    
+    st.dataframe(
+        preview_df.head(50),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            'Finale prijs (na mark-up)': st.column_config.NumberColumn(format="€ %.2f"),
+            new_price_col: st.column_config.NumberColumn(format="€ %.2f") if 'prijs' in new_price_col.lower() else None
+        }
+    )
+    
+    if len(push_df) > 50:
+        st.caption(f"... en {len(push_df) - 50} meer artikelen")
+    
+    # Samenvatting
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Totaal te pushen", len(push_df))
+    col2.metric("Gemiddelde nieuwe prijs", f"€{push_df['_final_price'].mean():.2f}")
+    col3.metric("Totale waarde", f"€{push_df['_final_price'].sum():,.2f}")
+    
+    # ============================================
+    # 4.6 PUSH NAAR PRIORITY
+    # ============================================
+    st.divider()
+    
+    # Priority API configuratie
+    PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
+    PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
+    BATCH_SIZE = 200
+    
+    # Push knop
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        push_button = st.button(
+            f"🚀 Push {len(push_df)} artikelen naar Priority",
+            type="primary",
+            use_container_width=True,
+            key="push_to_priority"
+        )
+    
+    with col2:
+        dry_run = st.checkbox("🧪 Test mode", value=True, help="Simuleert push zonder echte API calls")
+    
+    if push_button:
+        import requests
+        import time
+        
+        # Resultaten bijhouden
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        # Progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Verwerk in batches
+        total_items = len(push_df)
+        
+        for idx, (_, row) in enumerate(push_df.iterrows()):
+            priority_id = str(row[priority_id_col]).strip()
+            final_price = row['_final_price']
+            # Update progress
+            progress = (idx + 1) / total_items
+            progress_bar.progress(progress)
+            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel {priority_id}")
+            
+            if dry_run:
+                # Simuleer succes in test mode
+                results.append({
+                    'priority_id': priority_id,
+                    'new_price': final_price,
+                    'status': '✅ Succes (test mode)',
+                    'error': None
+                })
+                success_count += 1
+                time.sleep(0.01)  # Kleine delay voor visuele feedback
+            else:
+                # Echte API call
+                try:
+                    url = f"{PRIORITY_BASE}LOGPART('{priority_id}')"
+                    headers = {
+                        'Authorization': PRIORITY_AUTH,
+                        'Content-Type': 'application/json'
+                    }
+                    payload = {
+                        'BASEPLPRICE': final_price
+                    }
+                    
+                    response = requests.patch(url, json=payload, headers=headers, timeout=30)
+                    
+                    if response.status_code in [200, 204]:
+                        results.append({
+                            'priority_id': priority_id,
+                            'new_price': final_price,
+                            'status': '✅ Succes',
+                            'error': None
+                        })
+                        success_count += 1
+                    else:
+                        error_msg = f"HTTP {response.status_code}"
+                        try:
+                            error_detail = response.json()
+                            if 'error' in error_detail:
+                                error_msg = error_detail['error'].get('message', error_msg)
+                        except:
+                            error_msg = response.text[:200] if response.text else error_msg
+                        
+                        results.append({
+                            'priority_id': priority_id,
+                            'new_price': final_price,
+                            'status': '❌ Mislukt',
+                            'error': error_msg
+                        })
+                        error_count += 1
+                
+                except requests.exceptions.Timeout:
+                    results.append({
+                        'priority_id': priority_id,
+                        'new_price': final_price,
+                        'status': '❌ Timeout',
+                        'error': 'Request timeout na 30 seconden'
+                    })
+                    error_count += 1
+                
+                except requests.exceptions.RequestException as e:
+                    results.append({
+                        'priority_id': priority_id,
+                        'new_price': final_price,
+                        'status': '❌ Fout',
+                        'error': str(e)
+                    })
+                    error_count += 1
+                
+                # Kleine delay om API niet te overbelasten
+                if (idx + 1) % BATCH_SIZE == 0:
+                    time.sleep(0.5)  # Halve seconde pauze per batch
+        
+        # Verwijder progress indicators
+        progress_bar.empty()
+        status_text.empty()
+        
+        # ============================================
+        # 4.7 RESULTATEN TONEN
+        # ============================================
+        st.subheader("📊 Push Resultaten")
+        
+        # Samenvatting
+        col1, col2, col3 = st.columns(3)
+        col1.metric("✅ Succesvol", success_count)
+        col2.metric("❌ Mislukt", error_count)
+        col3.metric("📊 Totaal", len(results))
+        
+        # Resultaten DataFrame
+        results_df = pd.DataFrame(results)
+        
+        # Sla resultaten op in session state voor retry
+        st.session_state['push_results'] = results_df
+        st.session_state['push_df'] = push_df
+        st.session_state['priority_id_col'] = priority_id_col
+        
+        # Toon resultaten tabel
+        if error_count > 0:
+            st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt. Zie details hieronder.")
+            
+            # Toon gefaalde items
+            failed_df = results_df[results_df['status'].str.contains('❌')]
+            st.write("**Mislukte updates:**")
+            st.dataframe(
+                failed_df,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt!")
+        
+        # Download resultaten
+        st.download_button(
+            label="📥 Download resultaten (Excel)",
+            data=convert_to_excel(results_df),
+            file_name="priority_push_resultaten.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_push_results"
+        )
+    
+    # ============================================
+    # 4.8 RETRY MISLUKTE ITEMS
+    # ============================================
+    if 'push_results' in st.session_state:
+        results_df = st.session_state['push_results']
+        failed_items = results_df[results_df['status'].str.contains('❌')]
+        
+        if len(failed_items) > 0:
+            st.divider()
+            st.subheader("🔄 Opnieuw proberen")
+            
+            st.write(f"**{len(failed_items)} artikelen** zijn niet bijgewerkt.")
+            
+            # Toon gefaalde items
+            with st.expander("👀 Bekijk mislukte items"):
+                st.dataframe(
+                    failed_items,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                retry_button = st.button(
+                    f"🔄 Retry {len(failed_items)} mislukte items",
+                    type="secondary",
+                    use_container_width=True,
+                    key="retry_failed"
+                )
+            
+            with col2:
+                retry_dry_run = st.checkbox("🧪 Test mode", value=True, key="retry_dry_run")
+            
+            if retry_button:
+                import requests
+                import time
+                
+                # Haal originele data op
+                push_df = st.session_state['push_df']
+                priority_id_col = st.session_state['priority_id_col']
+                
+                # Filter alleen mislukte items
+                failed_ids = failed_items['priority_id'].tolist()
+                retry_df = push_df[push_df[priority_id_col].astype(str).isin(failed_ids)].copy()
+                
+                # Resultaten bijhouden
+                retry_results = []
+                retry_success = 0
+                retry_error = 0
+                
+                # Progress bar
+                retry_progress = st.progress(0)
+                retry_status = st.empty()
+                
+                for idx, (_, row) in enumerate(retry_df.iterrows()):
+                    priority_id = str(row[priority_id_col]).strip()
+                    final_price = row['_final_price']
+                    
+                    # Update progress
+                    progress = (idx + 1) / len(retry_df)
+                    retry_progress.progress(progress)
+                    retry_status.text(f"🔄 Retry: {idx + 1}/{len(retry_df)} - Artikel {priority_id}")
+                    
+                    if retry_dry_run:
+                        retry_results.append({
+                            'priority_id': priority_id,
+                            'new_price': final_price,
+                            'status': '✅ Succes (test mode)',
+                            'error': None
+                        })
+                        retry_success += 1
+                        time.sleep(0.01)
+                    else:
+                        try:
+                            url = f"{PRIORITY_BASE}LOGPART('{priority_id}')"
+                            headers = {
+                                'Authorization': PRIORITY_AUTH,
+                                'Content-Type': 'application/json'
+                            }
+                            payload = {
+                                'BASEPLPRICE': final_price
+                            }
+                            
+                            response = requests.patch(url, json=payload, headers=headers, timeout=30)
+                            
+                            if response.status_code in [200, 204]:
+                                retry_results.append({
+                                    'priority_id': priority_id,
+                                    'new_price': final_price,
+                                    'status': '✅ Succes',
+                                    'error': None
+                                })
+                                retry_success += 1
+                            else:
+                                error_msg = f"HTTP {response.status_code}"
+                                try:
+                                    error_detail = response.json()
+                                    if 'error' in error_detail:
+                                        error_msg = error_detail['error'].get('message', error_msg)
+                                except:
+                                    error_msg = response.text[:200] if response.text else error_msg
+                                
+                                retry_results.append({
+                                    'priority_id': priority_id,
+                                    'new_price': final_price,
+                                    'status': '❌ Mislukt',
+                                    'error': error_msg
+                                })
+                                retry_error += 1
+                        
+                        except Exception as e:
+                            retry_results.append({
+                                'priority_id': priority_id,
+                                'new_price': final_price,
+                                'status': '❌ Fout',
+                                'error': str(e)
+                            })
+                            retry_error += 1
+                        
+                        time.sleep(0.1)  # Kleine delay
+                
+                # Verwijder progress
+                retry_progress.empty()
+                retry_status.empty()
+                
+                # Toon retry resultaten
+                st.subheader("📊 Retry Resultaten")
+                
+                col1, col2 = st.columns(2)
+                col1.metric("✅ Nu succesvol", retry_success)
+                col2.metric("❌ Nog steeds mislukt", retry_error)
+                
+                retry_results_df = pd.DataFrame(retry_results)
+                
+                # Update session state met nieuwe resultaten
+                # Vervang oude failed items met nieuwe resultaten
+                original_success = results_df[~results_df['status'].str.contains('❌')]
+                updated_results = pd.concat([original_success, retry_results_df], ignore_index=True)
+                st.session_state['push_results'] = updated_results
+                
+                if retry_error > 0:
+                    st.warning(f"⚠️ {retry_error} artikelen nog steeds niet bijgewerkt.")
+                    st.dataframe(
+                        retry_results_df[retry_results_df['status'].str.contains('❌')],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.success("🎉 Alle retry items succesvol bijgewerkt!")
+                
+                # Download retry resultaten
+                st.download_button(
+                    label="📥 Download retry resultaten (Excel)",
+                    data=convert_to_excel(retry_results_df),
+                    file_name="priority_retry_resultaten.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_retry_results"
+                )    
     
     # ============================================
