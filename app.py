@@ -217,39 +217,61 @@ if own_df is not None and supplier_df is not None:
         st.subheader("Uw bestand")
         own_article_col = st.selectbox(
             "Kolom met artikelnummer/code:",
-            options=own_df.columns,
+            options=own_df.columns.tolist(),
             key="own_article"
         )
         own_price_col = st.selectbox(
             "Kolom met huidige prijs:",
-            options=own_df.columns,
+            options=own_df.columns.tolist(),
             key="own_price"
         )
-        # Optioneel: extra kolommen meenemen
-        own_extra_cols = st.multiselect(
-            "Extra kolommen meenemen (optioneel):",
-            options=[c for c in own_df.columns if c not in [own_article_col, own_price_col]],
-            key="own_extra"
-        )
+        
+        # Extra kolommen: alle behalve artikel en prijs
+        own_available_extra = [c for c in own_df.columns if c not in [own_article_col, own_price_col]]
+        
+        # Select All checkbox
+        own_select_all = st.checkbox("Selecteer alle extra kolommen", key="own_select_all")
+        
+        if own_select_all:
+            own_extra_cols = own_available_extra
+            st.info(f"✅ {len(own_extra_cols)} kolommen geselecteerd")
+        else:
+            own_extra_cols = st.multiselect(
+                "Extra kolommen meenemen (optioneel):",
+                options=own_available_extra,
+                default=[],
+                key="own_extra"
+            )
     
     with col2:
         st.subheader("Leverancier bestand")
         supplier_article_col = st.selectbox(
             "Kolom met artikelnummer/code:",
-            options=supplier_df.columns,
+            options=supplier_df.columns.tolist(),
             key="supplier_article"
         )
         supplier_price_col = st.selectbox(
             "Kolom met nieuwe prijs:",
-            options=supplier_df.columns,
+            options=supplier_df.columns.tolist(),
             key="supplier_price"
         )
-        # Extra kolommen van leverancier meenemen
-        supplier_extra_cols = st.multiselect(
-            "Extra kolommen meenemen (optioneel):",
-            options=[c for c in supplier_df.columns if c not in [supplier_article_col, supplier_price_col]],
-            key="supplier_extra"
-        )
+        
+        # Extra kolommen: alle behalve artikel en prijs
+        supplier_available_extra = [c for c in supplier_df.columns if c not in [supplier_article_col, supplier_price_col]]
+        
+        # Select All checkbox
+        supplier_select_all = st.checkbox("Selecteer alle extra kolommen", key="supplier_select_all")
+        
+        if supplier_select_all:
+            supplier_extra_cols = supplier_available_extra
+            st.info(f"✅ {len(supplier_extra_cols)} kolommen geselecteerd")
+        else:
+            supplier_extra_cols = st.multiselect(
+                "Extra kolommen meenemen (optioneel):",
+                options=supplier_available_extra,
+                default=[],
+                key="supplier_extra"
+            )
     # ============================================
     # STAP 3: VERGELIJKEN
     # ============================================
