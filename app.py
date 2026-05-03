@@ -732,16 +732,16 @@ if 'final_result' in st.session_state:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Priority ID kolom selectie
-        priority_id_candidates = [c for c in final_result.columns if 'priority' in c.lower() or 'id' in c.lower()]
-        default_priority_id = priority_id_candidates[0] if priority_id_candidates else final_result.columns[0]
+        # Artikelnummer kolom selectie (voor PARTNAME in Priority)
+        partname_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['article', 'artikel', 'partname', 'part_name', 'artikelnummer', 'article_code', 'code'])]
+        default_partname = partname_candidates[0] if partname_candidates else final_result.columns[0]
         
-        priority_id_col = st.selectbox(
-            "Kolom met Priority ID:",
+        partname_col = st.selectbox(
+            "Kolom met artikelnummer (→ PARTNAME):",
             options=final_result.columns.tolist(),
-            index=final_result.columns.tolist().index(default_priority_id) if default_priority_id in final_result.columns else 0,
-            key="priority_id_col",
-            help="Deze kolom moet overeenkomen met PART (ID) in LOGPART"
+            index=final_result.columns.tolist().index(default_partname) if default_partname in final_result.columns else 0,
+            key="partname_col",
+            help="Deze kolom moet overeenkomen met PARTNAME in LOGPART"
         )
     
     with col2:
@@ -750,12 +750,27 @@ if 'final_result' in st.session_state:
         default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
         
         new_price_col = st.selectbox(
-            "Kolom met nieuwe prijs:",
+            "Kolom met nieuwe prijs (→ BASEPLPRICE):",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
             key="new_price_col",
             help="Deze waarde wordt naar BASEPLPRICE gestuurd"
         )
+    
+    # Extra kolommen voor preview
+    available_preview_cols = [c for c in final_result.columns if c not in [partname_col, new_price_col, status_col]]
+    
+    # Suggesties voor extra kolommen (artikelnaam, code, etc.)
+    suggested_cols = [c for c in available_preview_cols if any(x in c.lower() for x in ['name', 'naam', 'article', 'artikel', 'supplier', 'leverancier', 'omschrijving', 'description', 'huidige', 'current'])]
+    default_extra_cols = suggested_cols[:3] if suggested_cols else available_preview_cols[:3]
+    
+    extra_preview_cols = st.multiselect(
+        "Extra kolommen tonen in preview (optioneel):",
+        options=available_preview_cols,
+        default=default_extra_cols,
+        key="extra_preview_cols",
+        help="Selecteer extra kolommen om te tonen in de preview tabel"
+    )
     
     # ============================================
     # 4.2 FILTER SELECTIE
@@ -784,18 +799,18 @@ if 'final_result' in st.session_state:
         st.warning("⚠️ Selecteer minimaal één categorie om te pushen.")
         st.stop()
     
-    # Filter op status EN priority_id moet gevuld zijn
+    # Filter op status EN artikelnummer moet gevuld zijn
     push_df = final_result[
         (final_result[status_col].isin(selected_statuses)) &
-        (final_result[priority_id_col].notna()) &
-        (final_result[priority_id_col].astype(str).str.strip() != '') &
-        (final_result[priority_id_col].astype(str).str.lower() != 'nan')
+        (final_result[partname_col].notna()) &
+        (final_result[partname_col].astype(str).str.strip() != '') &
+        (final_result[partname_col].astype(str).str.lower() != 'nan')
     ].copy()
     
-    st.info(f"📋 {len(push_df)} artikelen geselecteerd met geldige Priority ID")
+    st.info(f"📋 {len(push_df)} artikelen geselecteerd met geldig artikelnummer")
     
     if len(push_df) == 0:
-        st.warning("⚠️ Geen artikelen gevonden met geldige Priority ID in de geselecteerde categorieën.")
+        st.warning("⚠️ Geen artikelen gevonden met geldig artikelnummer in de geselecteerde categorieën.")
         st.stop()
     
     # ============================================
@@ -809,6 +824,13 @@ if 'final_result' in st.session_state:
         horizontal=True,
         key="markup_type"
     )
+    
+    # Initialiseer variabelen
+    markup_value = 0
+    markup_scope = "Alle artikelen"
+    group_markups = {}
+    group_col = None
+    selected_for_markup = []
     
     # Mark-up waarde en scope
     if markup_type != "Geen mark-up":
@@ -843,10 +865,9 @@ if 'final_result' in st.session_state:
             )
         
         # Per artikelgroep configuratie
-        group_markups = {}
         if markup_scope == "Per artikelgroep":
             # Selecteer groepkolom
-            group_col_candidates = [c for c in final_result.columns if 'group' in c.lower() or 'family' in c.lower() or 'categor' in c.lower()]
+            group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie'])]
             
             group_col = st.selectbox(
                 "Groepeer op kolom:",
@@ -870,7 +891,7 @@ if 'final_result' in st.session_state:
                                 f"{group}",
                                 min_value=0.0,
                                 max_value=100.0,
-                                value=markup_value,
+                                value=float(markup_value),
                                 step=0.5,
                                 key=f"group_markup_{idx}",
                                 label_visibility="visible"
@@ -879,7 +900,7 @@ if 'final_result' in st.session_state:
                             group_markups[group] = st.number_input(
                                 f"{group}",
                                 min_value=0.0,
-                                value=markup_value,
+                                value=float(markup_value),
                                 step=1.0,
                                 key=f"group_markup_{idx}",
                                 label_visibility="visible"
@@ -893,10 +914,11 @@ if 'final_result' in st.session_state:
             st.write("**Selecteer artikelen voor mark-up:**")
             
             # Voeg selectie kolom toe
-            push_df['_apply_markup'] = False
+            markup_selection_df = push_df[[partname_col, new_price_col, status_col]].copy()
+            markup_selection_df['_apply_markup'] = False
             
             edited_df = st.data_editor(
-                push_df[[priority_id_col, new_price_col, status_col, '_apply_markup']].head(100),
+                markup_selection_df.head(100),
                 column_config={
                     "_apply_markup": st.column_config.CheckboxColumn(
                         "Mark-up?",
@@ -904,13 +926,13 @@ if 'final_result' in st.session_state:
                         default=False
                     )
                 },
-                disabled=[priority_id_col, new_price_col, status_col],
+                disabled=[partname_col, new_price_col, status_col],
                 hide_index=True,
                 key="markup_selection"
             )
             
-            # Update push_df met selecties
-            selected_for_markup = edited_df[edited_df['_apply_markup'] == True][priority_id_col].tolist()
+            # Update selecties
+            selected_for_markup = edited_df[edited_df['_apply_markup'] == True][partname_col].tolist()
             st.info(f"✅ {len(selected_for_markup)} artikelen geselecteerd voor mark-up")
     
     # ============================================
@@ -920,7 +942,8 @@ if 'final_result' in st.session_state:
     def calculate_final_price(row):
         """Bereken finale prijs inclusief eventuele mark-up"""
         try:
-            base_price = float(str(row[new_price_col]).replace(',', '.').replace('€', '').strip())
+            price_val = str(row[new_price_col]).replace(',', '.').replace('€', '').replace(' ', '').strip()
+            base_price = float(price_val)
         except (ValueError, TypeError):
             return None
         
@@ -928,18 +951,17 @@ if 'final_result' in st.session_state:
             return round(base_price, 2)
         
         # Bepaal mark-up voor dit artikel
+        applied_markup = 0
         if markup_scope == "Alle artikelen":
             applied_markup = markup_value
-        elif markup_scope == "Per artikelgroep":
+        elif markup_scope == "Per artikelgroep" and group_col:
             group = row.get(group_col, None)
             applied_markup = group_markups.get(group, 0)
         elif markup_scope == "Handmatig selecteren":
-            if row[priority_id_col] in selected_for_markup:
+            if row[partname_col] in selected_for_markup:
                 applied_markup = markup_value
             else:
                 applied_markup = 0
-        else:
-            applied_markup = 0
         
         # Bereken finale prijs
         if markup_type == "Percentage (%)":
@@ -955,28 +977,48 @@ if 'final_result' in st.session_state:
     # Verwijder rijen zonder geldige prijs
     push_df = push_df[push_df['_final_price'].notna()].copy()
     
+    if len(push_df) == 0:
+        st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
+        st.stop()
+    
     # ============================================
     # 4.5 PREVIEW
     # ============================================
     st.subheader("👁️ Preview")
     
-    # Toon preview tabel
-    preview_cols = [priority_id_col, new_price_col]
+    # Bouw preview kolommen op
+    preview_cols = [partname_col]
+    
+    # Voeg extra kolommen toe
+    for col in extra_preview_cols:
+        if col in push_df.columns and col not in preview_cols:
+            preview_cols.append(col)
+    
+    # Voeg prijs kolommen toe
+    preview_cols.append(new_price_col)
     if markup_type != "Geen mark-up":
         preview_cols.append('_final_price')
     preview_cols.append(status_col)
     
+    # Maak preview DataFrame
     preview_df = push_df[preview_cols].copy()
-    preview_df.columns = [c if c != '_final_price' else 'Finale prijs (na mark-up)' for c in preview_df.columns]
+    
+    # Hernoem _final_price voor duidelijkheid
+    if '_final_price' in preview_df.columns:
+        preview_df = preview_df.rename(columns={'_final_price': 'Finale prijs'})
+    
+    # Column config voor formatting
+    preview_col_config = {
+        'Finale prijs': st.column_config.NumberColumn(format="€ %.2f"),
+    }
+    if 'prijs' in new_price_col.lower() or 'price' in new_price_col.lower():
+        preview_col_config[new_price_col] = st.column_config.NumberColumn(format="€ %.2f")
     
     st.dataframe(
         preview_df.head(50),
         use_container_width=True,
         hide_index=True,
-        column_config={
-            'Finale prijs (na mark-up)': st.column_config.NumberColumn(format="€ %.2f"),
-            new_price_col: st.column_config.NumberColumn(format="€ %.2f") if 'prijs' in new_price_col.lower() else None
-        }
+        column_config=preview_col_config
     )
     
     if len(push_df) > 50:
@@ -985,7 +1027,7 @@ if 'final_result' in st.session_state:
     # Samenvatting
     col1, col2, col3 = st.columns(3)
     col1.metric("Totaal te pushen", len(push_df))
-    col2.metric("Gemiddelde nieuwe prijs", f"€{push_df['_final_price'].mean():.2f}")
+    col2.metric("Gemiddelde finale prijs", f"€{push_df['_final_price'].mean():.2f}")
     col3.metric("Totale waarde", f"€{push_df['_final_price'].sum():,.2f}")
     
     # ============================================
@@ -1025,21 +1067,22 @@ if 'final_result' in st.session_state:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Verwerk in batches
+        # Verwerk artikelen
         total_items = len(push_df)
         
         for idx, (_, row) in enumerate(push_df.iterrows()):
-            priority_id = str(row[priority_id_col]).strip()
+            partname = str(row[partname_col]).strip()
             final_price = row['_final_price']
+            
             # Update progress
             progress = (idx + 1) / total_items
             progress_bar.progress(progress)
-            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel {priority_id}")
+            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel {partname}")
             
             if dry_run:
                 # Simuleer succes in test mode
                 results.append({
-                    'priority_id': priority_id,
+                    'partname': partname,
                     'new_price': final_price,
                     'status': '✅ Succes (test mode)',
                     'error': None
@@ -1049,7 +1092,11 @@ if 'final_result' in st.session_state:
             else:
                 # Echte API call
                 try:
-                    url = f"{PRIORITY_BASE}LOGPART('{priority_id}')"
+                    # URL encode de PARTNAME voor veilige request
+                    import urllib.parse
+                    encoded_partname = urllib.parse.quote(partname, safe='')
+                    
+                    url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
                     headers = {
                         'Authorization': PRIORITY_AUTH,
                         'Content-Type': 'application/json'
@@ -1062,7 +1109,7 @@ if 'final_result' in st.session_state:
                     
                     if response.status_code in [200, 204]:
                         results.append({
-                            'priority_id': priority_id,
+                            'partname': partname,
                             'new_price': final_price,
                             'status': '✅ Succes',
                             'error': None
@@ -1078,7 +1125,7 @@ if 'final_result' in st.session_state:
                             error_msg = response.text[:200] if response.text else error_msg
                         
                         results.append({
-                            'priority_id': priority_id,
+                            'partname': partname,
                             'new_price': final_price,
                             'status': '❌ Mislukt',
                             'error': error_msg
@@ -1087,7 +1134,7 @@ if 'final_result' in st.session_state:
                 
                 except requests.exceptions.Timeout:
                     results.append({
-                        'priority_id': priority_id,
+                        'partname': partname,
                         'new_price': final_price,
                         'status': '❌ Timeout',
                         'error': 'Request timeout na 30 seconden'
@@ -1096,7 +1143,7 @@ if 'final_result' in st.session_state:
                 
                 except requests.exceptions.RequestException as e:
                     results.append({
-                        'priority_id': priority_id,
+                        'partname': partname,
                         'new_price': final_price,
                         'status': '❌ Fout',
                         'error': str(e)
@@ -1126,9 +1173,10 @@ if 'final_result' in st.session_state:
         results_df = pd.DataFrame(results)
         
         # Sla resultaten op in session state voor retry
+        # Gebruik _for_retry suffix om conflict met widget keys te voorkomen
         st.session_state['push_results'] = results_df
-        st.session_state['push_df'] = push_df
-        st.session_state['priority_id_col'] = priority_id_col
+        st.session_state['push_df_for_retry'] = push_df.copy()
+        st.session_state['partname_col_for_retry'] = partname_col
         
         # Toon resultaten tabel
         if error_count > 0:
@@ -1144,6 +1192,14 @@ if 'final_result' in st.session_state:
             )
         else:
             st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt!")
+        
+        # Toon volledige resultaten
+        with st.expander("📋 Bekijk alle resultaten"):
+            st.dataframe(
+                results_df,
+                use_container_width=True,
+                hide_index=True
+            )
         
         # Download resultaten
         st.download_button(
@@ -1190,15 +1246,16 @@ if 'final_result' in st.session_state:
             
             if retry_button:
                 import requests
+                import urllib.parse
                 import time
                 
-                # Haal originele data op
-                push_df = st.session_state['push_df']
-                priority_id_col = st.session_state['priority_id_col']
+                # Haal originele data op (gebruik _for_retry keys)
+                retry_push_df = st.session_state['push_df_for_retry']
+                retry_partname_col = st.session_state['partname_col_for_retry']
                 
                 # Filter alleen mislukte items
-                failed_ids = failed_items['priority_id'].tolist()
-                retry_df = push_df[push_df[priority_id_col].astype(str).isin(failed_ids)].copy()
+                failed_partnames = failed_items['partname'].astype(str).tolist()
+                retry_df = retry_push_df[retry_push_df[retry_partname_col].astype(str).isin(failed_partnames)].copy()
                 
                 # Resultaten bijhouden
                 retry_results = []
@@ -1210,17 +1267,17 @@ if 'final_result' in st.session_state:
                 retry_status = st.empty()
                 
                 for idx, (_, row) in enumerate(retry_df.iterrows()):
-                    priority_id = str(row[priority_id_col]).strip()
+                    partname = str(row[retry_partname_col]).strip()
                     final_price = row['_final_price']
                     
                     # Update progress
                     progress = (idx + 1) / len(retry_df)
                     retry_progress.progress(progress)
-                    retry_status.text(f"🔄 Retry: {idx + 1}/{len(retry_df)} - Artikel {priority_id}")
+                    retry_status.text(f"🔄 Retry: {idx + 1}/{len(retry_df)} - Artikel {partname}")
                     
                     if retry_dry_run:
                         retry_results.append({
-                            'priority_id': priority_id,
+                            'partname': partname,
                             'new_price': final_price,
                             'status': '✅ Succes (test mode)',
                             'error': None
@@ -1229,7 +1286,8 @@ if 'final_result' in st.session_state:
                         time.sleep(0.01)
                     else:
                         try:
-                            url = f"{PRIORITY_BASE}LOGPART('{priority_id}')"
+                            encoded_partname = urllib.parse.quote(partname, safe='')
+                            url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
                             headers = {
                                 'Authorization': PRIORITY_AUTH,
                                 'Content-Type': 'application/json'
@@ -1242,7 +1300,7 @@ if 'final_result' in st.session_state:
                             
                             if response.status_code in [200, 204]:
                                 retry_results.append({
-                                    'priority_id': priority_id,
+                                    'partname': partname,
                                     'new_price': final_price,
                                     'status': '✅ Succes',
                                     'error': None
@@ -1258,7 +1316,7 @@ if 'final_result' in st.session_state:
                                     error_msg = response.text[:200] if response.text else error_msg
                                 
                                 retry_results.append({
-                                    'priority_id': priority_id,
+                                    'partname': partname,
                                     'new_price': final_price,
                                     'status': '❌ Mislukt',
                                     'error': error_msg
@@ -1267,7 +1325,7 @@ if 'final_result' in st.session_state:
                         
                         except Exception as e:
                             retry_results.append({
-                                'priority_id': priority_id,
+                                'partname': partname,
                                 'new_price': final_price,
                                 'status': '❌ Fout',
                                 'error': str(e)
@@ -1290,11 +1348,11 @@ if 'final_result' in st.session_state:
                 retry_results_df = pd.DataFrame(retry_results)
                 
                 # Update session state met nieuwe resultaten
-                # Vervang oude failed items met nieuwe resultaten
                 original_success = results_df[~results_df['status'].str.contains('❌')]
                 updated_results = pd.concat([original_success, retry_results_df], ignore_index=True)
                 st.session_state['push_results'] = updated_results
                 
+                # Toon resultaten
                 if retry_error > 0:
                     st.warning(f"⚠️ {retry_error} artikelen nog steeds niet bijgewerkt.")
                     st.dataframe(
@@ -1312,6 +1370,6 @@ if 'final_result' in st.session_state:
                     file_name="priority_retry_resultaten.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_retry_results"
-                )    
+                )
     
     # ============================================
