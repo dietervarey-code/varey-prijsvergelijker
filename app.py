@@ -1916,7 +1916,7 @@ if 'final_result' in st.session_state:
         col4.metric("Gem. korting 1", f"{spl_push_df['_disc1'].mean():.1f}%")
     
     # ============================================
-    # 5.7 PUSH NAAR PRIORITY
+    # 5.7 PUSH NAAR PRIORITY (PATCH)
     # ============================================
     st.divider()
     
@@ -1924,8 +1924,8 @@ if 'final_result' in st.session_state:
     PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
     PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
     
-    # Toon wat er wordt aangemaakt
-    st.write("**Prijslijst die wordt aangemaakt:**")
+    # Toon wat er wordt bijgewerkt
+    st.write("**Prijslijst die wordt bijgewerkt:**")
     
     header_info = {
         "SUPPLNAME": suppl_name,
@@ -1947,7 +1947,7 @@ if 'final_result' in st.session_state:
     
     with col1:
         spl_push_button = st.button(
-            f"🚀 Push prijslijst met {len(spl_push_df)} artikelen naar Priority",
+            f"✏️ Update prijslijst met {len(spl_push_df)} artikelen",
             type="primary",
             use_container_width=True,
             key="spl_push_to_priority"
@@ -1968,27 +1968,9 @@ if 'final_result' in st.session_state:
         status_text.text("⏳ Voorbereiden prijslijst data...")
         
         # ============================================
-        # STAP 1: BOUW PAYLOAD
+        # STAP 1: BOUW SUBFORM ITEMS
         # ============================================
         
-        # Header payload
-        header_payload = {
-            "SUPPLNAME": suppl_name,
-            "SUPNAME": sup_name,
-            "SUPPLDATE": format_date_for_priority(suppl_date),
-            "CODE": currency_code
-        }
-        
-        # Optionele velden
-        if suppl_des:
-            header_payload["SUPPLDES"] = suppl_des
-        if expiry_date:
-            header_payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
-        if mnf_name:
-            header_payload["MNFNAME"] = mnf_name
-        if multiply_price != 1.0:
-            header_payload["MULTIPLYPRICE"] = multiply_price
-        # Subform items (SPARTPRICE_SUBFORM)
         subform_items = []
         
         for idx, (_, row) in enumerate(spl_push_df.iterrows()):
@@ -2017,51 +1999,77 @@ if 'final_result' in st.session_state:
             
             subform_items.append(item)
         
-        # Voeg subform toe aan header
-        header_payload["SPARTPRICE_SUBFORM"] = subform_items
-        
         progress_bar.progress(0.1)
         status_text.text(f"⏳ Payload voorbereid: {len(subform_items)} artikelen")
         
         # ============================================
-        # STAP 2: TOON PAYLOAD (DEBUG)
+        # STAP 2: BOUW URL EN PAYLOAD VOOR PATCH
         # ============================================
         
-        with st.expander("🔧 Debug: Bekijk volledige payload"):
-            # Toon eerste paar items
-            debug_payload = header_payload.copy()
+        # URL format: SUPPRICELIST(SUPPLNAME='code',SUPPLDATE=2018-03-15T00:00:00+02:00)
+        formatted_date = format_date_for_priority(suppl_date)
+        
+        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
+        
+        # Payload: subform items + optionele header updates
+        payload = {
+            "SPARTPRICE_SUBFORM": subform_items
+        }
+        
+        # Optioneel: header velden meesturen als ze gewijzigd moeten worden
+        if suppl_des:
+            payload["SUPPLDES"] = suppl_des
+        if currency_code and currency_code != "EUR":
+            payload["CODE"] = currency_code
+        if mnf_name:
+            payload["MNFNAME"] = mnf_name
+        if multiply_price != 1.0:
+            payload["MULTIPLYPRICE"] = multiply_price
+        if expiry_date:
+            payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
+        
+        # ============================================
+        # STAP 3: TOON PAYLOAD (DEBUG)
+        # ============================================
+        
+        with st.expander("🔧 Debug: Bekijk request details"):
+            st.write(f"**Methode:** PATCH")
+            st.write(f"**URL:** `{url}`")
+            st.write("**Payload (eerste 5 artikelen):**")
+            debug_payload = payload.copy()
             debug_payload["SPARTPRICE_SUBFORM"] = subform_items[:5]
             st.json(debug_payload)
             if len(subform_items) > 5:
                 st.caption(f"... en {len(subform_items) - 5} meer items")
         
         # ============================================
-        # STAP 3: PUSH NAAR PRIORITY
+        # STAP 4: PATCH NAAR PRIORITY
         # ============================================
         
         if spl_dry_run:
             # Simuleer succes
             progress_bar.progress(0.5)
-            status_text.text("🧪 Test mode: Simuleren van API call...")
+            status_text.text("🧪 Test mode: Simuleren van PATCH request...")
             time.sleep(1)
             
             progress_bar.progress(1.0)
             status_text.empty()
             progress_bar.empty()
             
-            st.success(f"🧪 **Test mode**: Prijslijst zou succesvol aangemaakt worden met {len(subform_items)} artikelen.")
+            st.success(f"🧪 **Test mode**: Prijslijst zou succesvol bijgewerkt worden met {len(subform_items)} artikelen.")
             
-            # Toon wat er zou worden verstuurd
+            # Toon samenvatting
             st.write("**Samenvatting (test mode):**")
             col1, col2, col3 = st.columns(3)
             col1.metric("Prijslijstcode", suppl_name)
             col2.metric("Leverancier", sup_name)
             col3.metric("Artikelen", len(subform_items))
             
-            # Sla resultaten op voor eventuele download
+            # Sla resultaten op
             st.session_state['spl_push_result'] = {
                 'status': 'test_success',
-                'payload': header_payload,
+                'url': url,
+                'payload': payload,
                 'item_count': len(subform_items)
             }
             
@@ -2071,44 +2079,44 @@ if 'final_result' in st.session_state:
                 progress_bar.progress(0.3)
                 status_text.text("⏳ Verbinden met Priority API...")
                 
-                url = f"{PRIORITY_BASE}SUPPRICELIST"
                 headers = {
                     'Authorization': PRIORITY_AUTH,
                     'Content-Type': 'application/json'
                 }
                 
                 progress_bar.progress(0.5)
-                status_text.text(f"⏳ Versturen prijslijst met {len(subform_items)} artikelen...")
+                status_text.text(f"⏳ Bijwerken prijslijst met {len(subform_items)} artikelen...")
                 
-                response = requests.post(
+                response = requests.patch(
                     url,
-                    json=header_payload,
+                    json=payload,
                     headers=headers,
-                    timeout=120  # Langere timeout voor grote payloads
+                    timeout=120
                 )
                 
                 progress_bar.progress(0.9)
                 status_text.text("⏳ Verwerken response...")
                 
-                if response.status_code in [200, 201]:
+                if response.status_code in [200, 204]:
                     progress_bar.progress(1.0)
                     status_text.empty()
                     progress_bar.empty()
                     
-                    st.success(f"🎉 Prijslijst **{suppl_name}** succesvol aangemaakt met {len(subform_items)} artikelen!")
+                    st.success(f"🎉 Prijslijst **{suppl_name}** succesvol bijgewerkt met {len(subform_items)} artikelen!")
                     
                     # Toon response
                     try:
-                        response_data = response.json()
-                        with st.expander("📄 API Response"):
-                            st.json(response_data)
+                        if response.text:
+                            response_data = response.json()
+                            with st.expander("📄 API Response"):
+                                st.json(response_data)
                     except:
                         pass
                     
                     # Sla resultaat op
                     st.session_state['spl_push_result'] = {
                         'status': 'success',
-                        'payload': header_payload,
+                        'payload': payload,
                         'item_count': len(subform_items),
                         'response': response.text[:1000] if response.text else None
                     }
@@ -2125,11 +2133,11 @@ if 'final_result' in st.session_state:
                         error_data = response.json()
                         if 'error' in error_data:
                             error_msg = error_data['error'].get('message', error_msg)
-                            error_detail = error_data['error'].get('innererror', {}).get('message', '')
+                            error_detail = str(error_data['error'].get('innererror', ''))
                     except:
                         error_detail = response.text[:500] if response.text else ""
                     
-                    st.error(f"❌ Fout bij aanmaken prijslijst: {error_msg}")
+                    st.error(f"❌ Fout bij bijwerken prijslijst: {error_msg}")
                     
                     if error_detail:
                         with st.expander("🔍 Error details"):
@@ -2138,7 +2146,7 @@ if 'final_result' in st.session_state:
                     # Sla resultaat op voor retry
                     st.session_state['spl_push_result'] = {
                         'status': 'error',
-                        'payload': header_payload,
+                        'payload': payload,
                         'item_count': len(subform_items),
                         'error': error_msg,
                         'error_detail': error_detail
@@ -2152,7 +2160,7 @@ if 'final_result' in st.session_state:
                 
                 st.session_state['spl_push_result'] = {
                     'status': 'timeout',
-                    'payload': header_payload,
+                    'payload': payload,
                     'item_count': len(subform_items)
                 }
             
@@ -2164,13 +2172,13 @@ if 'final_result' in st.session_state:
                 
                 st.session_state['spl_push_result'] = {
                     'status': 'connection_error',
-                    'payload': header_payload,
+                    'payload': payload,
                     'item_count': len(subform_items),
                     'error': str(e)
                 }
         
         # ============================================
-        # STAP 4: DOWNLOAD OPTIES
+        # STAP 5: DOWNLOAD OPTIES
         # ============================================
         st.divider()
         st.subheader("📥 Download")
@@ -2180,7 +2188,7 @@ if 'final_result' in st.session_state:
         with col1:
             # Download payload als JSON
             import json
-            payload_json = json.dumps(header_payload, indent=2, ensure_ascii=False)
+            payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
             
             st.download_button(
                 label="📥 Download payload (JSON)",
