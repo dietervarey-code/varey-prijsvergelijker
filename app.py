@@ -387,15 +387,47 @@ if own_df is not None and supplier_df is not None:
             # OUTPUT VOORBEREIDEN
             # ============================================
             
+            # Reset index om problemen te voorkomen
+            result = result.reset_index(drop=True)
+            
+            # Bouw kolommenlijst expliciet op
             output_cols = [own_article_col] + own_extra_cols + [own_price_col]
             
-            # Voeg leverancier extra kolommen toe
+            # Voeg leverancier prijs en extra kolommen toe
+            # Let op: _supplier_price is de interne naam, we hernoemen later
             result_cols = output_cols + ['_supplier_price'] + supplier_extra_cols + ['Verschil €', 'Verschil %', 'Status']
+            
+            # Controleer of alle kolommen bestaan
+            missing_cols = [c for c in result_cols if c not in result.columns]
+            if missing_cols:
+                st.error(f"Ontbrekende kolommen: {missing_cols}")
+                st.stop()
+            
+            # Selecteer alleen de gewenste kolommen
             final_result = result[result_cols].copy()
             
+            # Bouw nieuwe kolomnamen op - MOET EXACT EVENVEEL ZIJN
+            new_col_names = (
+                [own_article_col] +                    # Artikelnummer (behoud originele naam)
+                own_extra_cols +                       # Extra kolommen eigen bestand
+                ['Huidige prijs'] +                    # Eigen prijs hernoemd
+                ['Nieuwe prijs'] +                     # Leverancier prijs hernoemd
+                supplier_extra_cols +                  # Extra kolommen leverancier
+                ['Verschil €', 'Verschil %', 'Status'] # Berekende kolommen
+            )
+            
+            # Debug check
+            if len(result_cols) != len(new_col_names):
+                st.error(f"Kolom mismatch! result_cols: {len(result_cols)}, new_col_names: {len(new_col_names)}")
+                st.write("result_cols:", result_cols)
+                st.write("new_col_names:", new_col_names)
+                st.stop()
+            
             # Hernoem kolommen
-            new_col_names = [own_article_col] + own_extra_cols + ['Huidige prijs', 'Nieuwe prijs'] + supplier_extra_cols + ['Verschil €', 'Verschil %', 'Status']
             final_result.columns = new_col_names
+            
+            # Reset index nogmaals voor zekerheid
+            final_result = final_result.reset_index(drop=True)
             
             # Sla op in session state
             st.session_state['final_result'] = final_result
@@ -408,6 +440,7 @@ if own_df is not None and supplier_df is not None:
                 'total_increase': result[result['Verschil €'] > 0]['Verschil €'].sum(),
                 'total_decrease': result[result['Verschil €'] < 0]['Verschil €'].sum()
             }
+            
             # Bewaar voor exports
             st.session_state['supplier_extra_cols'] = supplier_extra_cols
             st.session_state['own_extra_cols'] = own_extra_cols
@@ -425,13 +458,18 @@ if own_df is not None and supplier_df is not None:
             # Selecteer originele kolommen voor export
             supplier_not_found_export_cols = [supplier_article_col, supplier_price_col] + supplier_extra_cols
             supplier_not_found_export = supplier_not_found[supplier_not_found_export_cols].copy()
+            supplier_not_found_export = supplier_not_found_export.reset_index(drop=True)
             st.session_state['supplier_not_found'] = supplier_not_found_export
             
             # Artikelen bij ons die NIET bij leverancier voorkomen
             own_not_found = result[result['_supplier_price'].isna()].copy()
             own_not_found_export_cols = [own_article_col] + own_extra_cols + [own_price_col]
+            # Filter alleen bestaande kolommen (voor het geval van mismatch)
+            own_not_found_export_cols = [c for c in own_not_found_export_cols if c in own_not_found.columns]
             own_not_found_export = own_not_found[own_not_found_export_cols].copy()
+            own_not_found_export = own_not_found_export.reset_index(drop=True)
             st.session_state['own_not_found'] = own_not_found_export
+
 # ============================================
 # RESULTATEN TONEN
 # ============================================
@@ -465,15 +503,15 @@ if 'final_result' in st.session_state:
     
     # Filter toepassen
     if filter_option == "🔴 Alleen prijsverhogingen":
-        display_df = final_result[final_result['Status'] == '🔴 Prijsverhoging']
+        display_df = final_result[final_result['Status'] == '🔴 Prijsverhoging'].copy()
     elif filter_option == "🟢 Alleen prijsverlagingen":
-        display_df = final_result[final_result['Status'] == '🟢 Prijsverlaging']
+        display_df = final_result[final_result['Status'] == '🟢 Prijsverlaging'].copy()
     elif filter_option == "🔴🟢 Alle wijzigingen":
-        display_df = final_result[final_result['Status'].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])]
+        display_df = final_result[final_result['Status'].isin(['🔴 Prijsverhoging', '🟢 Prijsverlaging'])].copy()
     elif filter_option == "⚠️ Niet gevonden":
-        display_df = final_result[final_result['Status'] == '⚠️ Niet gevonden']
+        display_df = final_result[final_result['Status'] == '⚠️ Niet gevonden'].copy()
     else:
-        display_df = final_result
+        display_df = final_result.copy()
     
     # Sorteer opties
     sort_col = st.selectbox(
@@ -489,41 +527,41 @@ if 'final_result' in st.session_state:
         na_position='last'
     )
     
+    # Reset index na sortering
+    display_df = display_df.reset_index(drop=True)
+    
     # Toon aantal resultaten
     st.info(f"📋 {len(display_df)} artikelen gevonden met huidige filter")
     
-    # Toon tabel
-    # Forceer artikelnummer als tekst in weergave
-    display_df_styled = display_df.copy()
+    # ============================================
+    # TABEL WEERGAVE
+    # ============================================
     
-    # Alle kolommen behalve prijs-kolommen als tekst behandelen
-    col_config = {
-        "Huidige prijs": st.column_config.NumberColumn(format="€ %.2f"),
-        "Nieuwe prijs": st.column_config.NumberColumn(format="€ %.2f"),
-        "Verschil €": st.column_config.NumberColumn(format="€ %.2f"),
-        "Verschil %": st.column_config.NumberColumn(format="%.2f %%"),
-    }
+    # Bouw column_config op
+    col_config = {}
     
-    # Eerste kolom (artikelnummer) als tekst
-    first_col = display_df.columns[0]
-    col_config[first_col] = st.column_config.TextColumn(first_col)
+    # Prijs kolommen als nummer met euro formatting
+    if 'Huidige prijs' in display_df.columns:
+        col_config['Huidige prijs'] = st.column_config.NumberColumn(format="€ %.2f")
+    if 'Nieuwe prijs' in display_df.columns:
+        col_config['Nieuwe prijs'] = st.column_config.NumberColumn(format="€ %.2f")
+    if 'Verschil €' in display_df.columns:
+        col_config['Verschil €'] = st.column_config.NumberColumn(format="€ %.2f")
+    if 'Verschil %' in display_df.columns:
+        col_config['Verschil %'] = st.column_config.NumberColumn(format="%.2f %%")
     
-    # Extra kolommen ook als tekst (eigen bestand)
-    for col in own_extra_cols:
-        if col in display_df.columns:
+    # Alle andere kolommen als tekst (voorkomt wetenschappelijke notatie etc.)
+    for col in display_df.columns:
+        if col not in col_config:
             col_config[col] = st.column_config.TextColumn(col)
     
-    # Extra kolommen van leverancier ook als tekst
-    if 'supplier_extra_cols' in st.session_state:
-        for col in st.session_state['supplier_extra_cols']:
-            if col in display_df.columns:
-                col_config[col] = st.column_config.TextColumn(col)
-    
+    # Toon dataframe ZONDER index
     st.dataframe(
-        display_df_styled,
+        display_df,
         use_container_width=True,
         height=400,
-        column_config=col_config
+        column_config=col_config,
+        hide_index=True
     )
     
     st.divider()
@@ -576,7 +614,11 @@ if 'final_result' in st.session_state:
             
             if len(own_not_found) > 0:
                 with st.expander("👀 Bekijk lijst"):
-                    st.dataframe(own_not_found.head(20), use_container_width=True)
+                    st.dataframe(
+                        own_not_found.head(20), 
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 
                 st.download_button(
                     label="📥 Export: Onze artikelen NIET bij leverancier",
@@ -594,7 +636,11 @@ if 'final_result' in st.session_state:
             
             if len(supplier_not_found) > 0:
                 with st.expander("👀 Bekijk lijst"):
-                    st.dataframe(supplier_not_found.head(20), use_container_width=True)
+                    st.dataframe(
+                        supplier_not_found.head(20), 
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 
                 st.download_button(
                     label="📥 Export: Leverancier artikelen NIET bij ons",
