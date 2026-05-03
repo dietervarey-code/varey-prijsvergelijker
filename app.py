@@ -1371,5 +1371,881 @@ if 'final_result' in st.session_state:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_retry_results"
                 )
+    # ============================================
+    # STAP 5: PUSH LEVERANCIERSPRIJSLIJST NAAR PRIORITY
+    # ============================================
+    st.divider()
+    st.header("📦 Stap 5: Leveranciersprijslijst naar Priority")
     
+    # Check of er data is
+    if 'final_result' not in st.session_state:
+        st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
+        st.stop()
+    
+    final_result = st.session_state['final_result']
+    status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
+    
+    # ============================================
+    # 5.1 PRIJSLIJST HEADER (SUPPRICELIST)
+    # ============================================
+    st.subheader("📋 Prijslijst gegevens (SUPPRICELIST)")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        suppl_name = st.text_input(
+            "Prijslijstcode (SUPPLNAME):",
+            value="",
+            max_chars=8,
+            key="suppl_name",
+            help="Max 8 karakters - Unieke code voor deze prijslijst"
+        )
+        
+        sup_name = st.text_input(
+            "Leverancierscode (SUPNAME):",
+            value="",
+            max_chars=16,
+            key="sup_name",
+            help="Max 16 karakters - Code van de leverancier in Priority"
+        )
+    
+    with col2:
+        suppl_date = st.date_input(
+            "Datum prijslijst (SUPPLDATE):",
+            value=None,
+            format="DD/MM/YYYY",
+            key="suppl_date",
+            help="Ingangsdatum van de prijslijst (dd/mm/jjjj)"
+        )
+        
+        currency_code = st.text_input(
+            "Valutacode (CODE):",
+            value="EUR",
+            max_chars=3,
+            key="currency_code",
+            help="Standaard: EUR"
+        )
+    
+    # Optionele velden
+    with st.expander("➕ Extra prijslijst opties (optioneel)"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            suppl_des = st.text_input(
+                "Prijslijst omschrijving (SUPPLDES):",
+                value="",
+                max_chars=16,
+                key="suppl_des",
+                help="Max 16 karakters"
+            )
+            
+            expiry_date = st.date_input(
+                "Vervaldatum (EXPIRYDATE):",
+                value=None,
+                format="DD/MM/YYYY",
+                key="expiry_date",
+                help="Optioneel - Vervaldatum prijslijst"
+            )
+        
+        with col2:
+            mnf_name = st.text_input(
+                "Fabrikantcode (MNFNAME):",
+                value="",
+                max_chars=10,
+                key="mnf_name",
+                help="Optioneel - Max 10 karakters"
+            )
+            
+            multiply_price = st.number_input(
+                "Prijsfactor (MULTIPLYPRICE):",
+                value=1.0,
+                min_value=0.0,
+                step=0.01,
+                key="multiply_price",
+                help="Standaard: 1.0"
+            )
+    
+    # Validatie header velden
+    if not suppl_name or not sup_name or not suppl_date:
+        st.warning("⚠️ Vul prijslijstcode, leverancierscode en datum in om verder te gaan.")
+        st.stop()
+    
+    # Functie om datum te formatteren voor Priority API
+    def format_date_for_priority(date_obj):
+        """Converteer Python date naar Priority DateTimeOffset format"""
+        if date_obj is None:
+            return None
+        # Format: 2018-03-15T00:00:00+02:00
+        return f"{date_obj.strftime('%Y-%m-%d')}T00:00:00+02:00"
+    
+    st.success(f"✅ Prijslijst: **{suppl_name}** voor leverancier **{sup_name}** per **{suppl_date.strftime('%d/%m/%Y')}**")
+    
+    # ============================================
+    # 5.2 KOLOM MAPPING (SPARTPRICE)
+    # ============================================
+    st.subheader("🔗 Kolom Mapping (SPARTPRICE)")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Artikelnummer kolom
+        partname_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['article', 'artikel', 'partname', 'part_name', 'artikelnummer', 'article_code', 'supplier_code'])]
+        default_partname = partname_candidates[0] if partname_candidates else final_result.columns[0]
+        
+        spl_partname_col = st.selectbox(
+            "Artikelnummer (→ PARTNAME):",
+            options=final_result.columns.tolist(),
+            index=final_result.columns.tolist().index(default_partname) if default_partname in final_result.columns else 0,
+            key="spl_partname_col"
+        )
+        
+        # Prijs kolom
+        price_candidates = [c for c in final_result.columns if 'prijs' in c.lower() or 'price' in c.lower()]
+        default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
+        
+        spl_price_col = st.selectbox(
+            "Prijs (→ PRICE):",
+            options=final_result.columns.tolist(),
+            index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
+            key="spl_price_col"
+        )
+    
+    with col2:
+        # Aantal (QUANT)
+        use_quant_col = st.checkbox("Aantal uit kolom halen", value=False, key="use_quant_col")
+        
+        if use_quant_col:
+            quant_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['quant', 'aantal', 'qty', 'quantity', 'step'])]
+            default_quant = quant_candidates[0] if quant_candidates else final_result.columns[0]
+            
+            spl_quant_col = st.selectbox(
+                "Aantal (→ QUANT):",
+                options=final_result.columns.tolist(),
+                index=final_result.columns.tolist().index(default_quant) if default_quant in final_result.columns else 0,
+                key="spl_quant_col"
+            )
+            default_quant_value = 1
+        else:
+            spl_quant_col = None
+            default_quant_value = st.number_input(
+                "Standaard aantal (QUANT):",
+                min_value=1,
+                value=1,
+                key="default_quant_value"
+            )
+    
+    # Extra preview kolommen
+    available_extra_cols = [c for c in final_result.columns if c not in [spl_partname_col, spl_price_col, status_col]]
+    
+    spl_extra_preview_cols = st.multiselect(
+        "Extra kolommen in preview:",
+        options=available_extra_cols,
+        default=[c for c in available_extra_cols if any(x in c.lower() for x in ['name', 'naam', 'omschrijving', 'family', 'group'])][:3],
+        key="spl_extra_preview_cols"
+    )
+    
+    # ============================================
+    # 5.3 FILTER SELECTIE
+    # ============================================
+    st.subheader("📊 Welke artikelen opnemen?")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        spl_include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="spl_include_increases")
+    with col2:
+        spl_include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="spl_include_decreases")
+    with col3:
+        spl_include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="spl_include_unchanged")
+    
+    # Filter data
+    spl_selected_statuses = []
+    if spl_include_increases:
+        spl_selected_statuses.append('🔴 Prijsverhoging')
+    if spl_include_decreases:
+        spl_selected_statuses.append('🟢 Prijsverlaging')
+    if spl_include_unchanged:
+        spl_selected_statuses.append('⚪ Ongewijzigd')
+    
+    if not spl_selected_statuses:
+        st.warning("⚠️ Selecteer minimaal één categorie.")
+        st.stop()
+    
+    # Filter op status en geldig artikelnummer
+    spl_push_df = final_result[
+        (final_result[status_col].isin(spl_selected_statuses)) &
+        (final_result[spl_partname_col].notna()) &
+        (final_result[spl_partname_col].astype(str).str.strip() != '') &
+        (final_result[spl_partname_col].astype(str).str.lower() != 'nan')
+    ].copy()
+    
+    st.info(f"📋 {len(spl_push_df)} artikelen geselecteerd")
+    
+    if len(spl_push_df) == 0:
+        st.warning("⚠️ Geen artikelen gevonden.")
+        st.stop()
+    
+    # ============================================
+    # 5.4 KORTINGEN CONFIGURATIE
+    # ============================================
+    st.subheader("💰 Kortingen (ZVAR_VDISC1, ZVAR_VDISC2, ZVAR_VDISC3)")
+    
+    discount_mode = st.radio(
+        "Kortingen instellen:",
+        options=[
+            "❌ Geen kortingen (alleen prijs)",
+            "📊 Vaste waarde voor hele prijslijst",
+            "📁 Per familie/artikelgroep",
+            "📋 Uit kolommen in bestand"
+        ],
+        key="discount_mode",
+        horizontal=False
+    )
+    
+    # Initialiseer korting variabelen
+    fixed_disc1 = 0.0
+    fixed_disc2 = 0.0
+    fixed_disc3 = 0.0
+    group_discounts = {}
+    discount_group_col = None
+    disc1_col = None
+    disc2_col = None
+    disc3_col = None
+    
+    if discount_mode == "📊 Vaste waarde voor hele prijslijst":
+        st.write("**Vaste kortingspercentages:**")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            fixed_disc1 = st.number_input(
+                "Korting 1 (%):",
+                min_value=0.0,
+                max_value=100.0,
+                value=0.0,
+                step=0.5,
+                key="fixed_disc1"
+            )
+        with col2:
+            fixed_disc2 = st.number_input(
+                "Korting 2 (%):",
+                min_value=0.0,
+                max_value=100.0,
+                value=0.0,
+                step=0.5,
+                key="fixed_disc2"
+            )
+        with col3:
+            fixed_disc3 = st.number_input(
+                "Korting 3 (%):",
+                min_value=0.0,
+                max_value=100.0,
+                value=0.0,
+                step=0.5,
+                key="fixed_disc3"
+            )
+    
+    elif discount_mode == "📁 Per familie/artikelgroep":
+        # Selecteer groepkolom
+        group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie', 'lijn', 'line'])]
+        
+        discount_group_col = st.selectbox(
+            "Groepeer op kolom:",
+            options=final_result.columns.tolist(),
+            index=final_result.columns.tolist().index(group_col_candidates[0]) if group_col_candidates else 0,
+            key="discount_group_col"
+        )
+        
+        # Haal unieke groepen op
+        unique_groups = spl_push_df[discount_group_col].dropna().unique().tolist()
+        unique_groups = sorted([str(g) for g in unique_groups if str(g).strip() != ''])
+        
+        if len(unique_groups) > 0 and len(unique_groups) <= 100:
+            st.write(f"**Kortingen per {discount_group_col}** ({len(unique_groups)} groepen):")
+            st.caption("💡 Tip: Je kunt waardes kopiëren/plakken in de tabel (Ctrl+C / Ctrl+V)")
+            
+            # Maak DataFrame voor bewerking
+            group_discount_df = pd.DataFrame({
+                'Groep': unique_groups,
+                'Korting 1 (%)': [0.0] * len(unique_groups),
+                'Korting 2 (%)': [0.0] * len(unique_groups),
+                'Korting 3 (%)': [0.0] * len(unique_groups)
+            })
+            # Toon bewerkbare tabel
+            edited_group_discounts = st.data_editor(
+                group_discount_df,
+                column_config={
+                    'Groep': st.column_config.TextColumn('Groep', disabled=True, width="large"),
+                    'Korting 1 (%)': st.column_config.NumberColumn('Korting 1 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
+                    'Korting 2 (%)': st.column_config.NumberColumn('Korting 2 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
+                    'Korting 3 (%)': st.column_config.NumberColumn('Korting 3 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                key="group_discount_editor"
+            )
+            
+            # Converteer naar dictionary
+            for _, row in edited_group_discounts.iterrows():
+                group_discounts[str(row['Groep'])] = {
+                    'disc1': float(row['Korting 1 (%)']),
+                    'disc2': float(row['Korting 2 (%)']),
+                    'disc3': float(row['Korting 3 (%)'])
+                }
+        
+        elif len(unique_groups) > 100:
+            st.warning(f"⚠️ Te veel groepen ({len(unique_groups)}). Gebruik 'Vaste waarde' of 'Uit kolommen'.")
+            discount_mode = "❌ Geen kortingen (alleen prijs)"
+        else:
+            st.warning("⚠️ Geen groepen gevonden in de geselecteerde kolom.")
+    
+    elif discount_mode == "📋 Uit kolommen in bestand":
+        st.write("**Selecteer kolommen met kortingspercentages:**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # Zoek kandidaat kolommen voor kortingen
+        disc_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['disc', 'kort', 'korting', 'discount', 'perc', 'vdisc'])]
+        
+        with col1:
+            disc1_options = ['(geen)'] + final_result.columns.tolist()
+            default_disc1_idx = 0
+            for i, opt in enumerate(disc1_options):
+                if any(x in opt.lower() for x in ['disc1', 'disc_1', 'korting1', 'korting_1', 'vdisc1']):
+                    default_disc1_idx = i
+                    break
+            
+            disc1_col = st.selectbox(
+                "Korting 1 kolom (→ ZVAR_VDISC1):",
+                options=disc1_options,
+                index=default_disc1_idx,
+                key="disc1_col"
+            )
+            if disc1_col == '(geen)':
+                disc1_col = None
+        
+        with col2:
+            disc2_options = ['(geen)'] + final_result.columns.tolist()
+            default_disc2_idx = 0
+            for i, opt in enumerate(disc2_options):
+                if any(x in opt.lower() for x in ['disc2', 'disc_2', 'korting2', 'korting_2', 'vdisc2']):
+                    default_disc2_idx = i
+                    break
+            
+            disc2_col = st.selectbox(
+                "Korting 2 kolom (→ ZVAR_VDISC2):",
+                options=disc2_options,
+                index=default_disc2_idx,
+                key="disc2_col"
+            )
+            if disc2_col == '(geen)':
+                disc2_col = None
+        
+        with col3:
+            disc3_options = ['(geen)'] + final_result.columns.tolist()
+            default_disc3_idx = 0
+            for i, opt in enumerate(disc3_options):
+                if any(x in opt.lower() for x in ['disc3', 'disc_3', 'korting3', 'korting_3', 'vdisc3']):
+                    default_disc3_idx = i
+                    break
+            
+            disc3_col = st.selectbox(
+                "Korting 3 kolom (→ ZVAR_VDISC3):",
+                options=disc3_options,
+                index=default_disc3_idx,
+                key="disc3_col"
+            )
+            if disc3_col == '(geen)':
+                disc3_col = None
+        
+        # Toon preview van geselecteerde kolommen
+        if disc1_col or disc2_col or disc3_col:
+            preview_disc_cols = [spl_partname_col]
+            if disc1_col:
+                preview_disc_cols.append(disc1_col)
+            if disc2_col:
+                preview_disc_cols.append(disc2_col)
+            if disc3_col:
+                preview_disc_cols.append(disc3_col)
+            
+            with st.expander("👀 Preview kortingskolommen"):
+                st.dataframe(
+                    spl_push_df[preview_disc_cols].head(10),
+                    use_container_width=True,
+                    hide_index=True
+                )
+    
+    # ============================================
+    # 5.5 BEREKEN FINALE DATA
+    # ============================================
+    
+    def get_discount_values(row):
+        """Haal kortingswaarden op basis van gekozen modus"""
+        disc1 = 0.0
+        disc2 = 0.0
+        disc3 = 0.0
+        
+        if discount_mode == "❌ Geen kortingen (alleen prijs)":
+            return None, None, None
+        
+        elif discount_mode == "📊 Vaste waarde voor hele prijslijst":
+            disc1 = fixed_disc1
+            disc2 = fixed_disc2
+            disc3 = fixed_disc3
+        
+        elif discount_mode == "📁 Per familie/artikelgroep":
+            if discount_group_col:
+                group = str(row.get(discount_group_col, ''))
+                group_vals = group_discounts.get(group, {'disc1': 0.0, 'disc2': 0.0, 'disc3': 0.0})
+                disc1 = group_vals['disc1']
+                disc2 = group_vals['disc2']
+                disc3 = group_vals['disc3']
+        
+        elif discount_mode == "📋 Uit kolommen in bestand":
+            try:
+                if disc1_col:
+                    val = row.get(disc1_col, 0)
+                    disc1 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
+                if disc2_col:
+                    val = row.get(disc2_col, 0)
+                    disc2 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
+                if disc3_col:
+                    val = row.get(disc3_col, 0)
+                    disc3 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
+            except (ValueError, TypeError):
+                pass
+        
+        return disc1, disc2, disc3
+    
+    def parse_price(value):
+        """Converteer prijs naar float"""
+        if pd.isna(value) or value is None:
+            return None
+        try:
+            return float(str(value).replace(',', '.').replace('€', '').replace(' ', '').strip())
+        except (ValueError, TypeError):
+            return None
+    
+    def parse_quantity(value):
+        """Converteer aantal naar integer"""
+        if pd.isna(value) or value is None:
+            return default_quant_value
+        try:
+            return int(float(str(value).replace(',', '.').strip()))
+        except (ValueError, TypeError):
+            return default_quant_value
+    
+    # Bereid data voor
+    spl_push_df['_price'] = spl_push_df[spl_price_col].apply(parse_price)
+    
+    if spl_quant_col:
+        spl_push_df['_quant'] = spl_push_df[spl_quant_col].apply(parse_quantity)
+    else:
+        spl_push_df['_quant'] = default_quant_value
+    
+    # Kortingen toevoegen
+    if discount_mode != "❌ Geen kortingen (alleen prijs)":
+        discount_data = spl_push_df.apply(get_discount_values, axis=1)
+        spl_push_df['_disc1'] = [d[0] for d in discount_data]
+        spl_push_df['_disc2'] = [d[1] for d in discount_data]
+        spl_push_df['_disc3'] = [d[2] for d in discount_data]
+    
+    # Filter ongeldige prijzen
+    spl_push_df = spl_push_df[spl_push_df['_price'].notna()].copy()
+    
+    if len(spl_push_df) == 0:
+        st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
+        st.stop()
+    
+    # ============================================
+    # 5.6 PREVIEW
+    # ============================================
+    st.subheader("👁️ Preview")
+    
+    # Bouw preview kolommen
+    preview_cols = [spl_partname_col]
+    for col in spl_extra_preview_cols:
+        if col in spl_push_df.columns and col not in preview_cols:
+            preview_cols.append(col)
+    
+    preview_cols.extend(['_quant', '_price'])
+    
+    if discount_mode != "❌ Geen kortingen (alleen prijs)":
+        preview_cols.extend(['_disc1', '_disc2', '_disc3'])
+    
+    preview_cols.append(status_col)
+    
+    # Maak preview DataFrame
+    preview_df = spl_push_df[preview_cols].copy()
+    
+    # Hernoem kolommen voor duidelijkheid
+    rename_map = {
+        '_quant': 'Aantal',
+        '_price': 'Prijs',
+        '_disc1': 'Korting 1 (%)',
+        '_disc2': 'Korting 2 (%)',
+        '_disc3': 'Korting 3 (%)'
+    }
+    preview_df = preview_df.rename(columns=rename_map)
+    
+    # Column config
+    preview_col_config = {
+        'Prijs': st.column_config.NumberColumn(format="€ %.2f"),
+        'Aantal': st.column_config.NumberColumn(format="%d"),
+        'Korting 1 (%)': st.column_config.NumberColumn(format="%.2f %%"),
+        'Korting 2 (%)': st.column_config.NumberColumn(format="%.2f %%"),
+        'Korting 3 (%)': st.column_config.NumberColumn(format="%.2f %%"),
+    }
+    
+    st.dataframe(
+        preview_df.head(50),
+        use_container_width=True,
+        hide_index=True,
+        column_config=preview_col_config
+    )
+    
+    if len(spl_push_df) > 50:
+        st.caption(f"... en {len(spl_push_df) - 50} meer artikelen")
+    
+    # Samenvatting
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Artikelen", len(spl_push_df))
+    col2.metric("Gem. prijs", f"€{spl_push_df['_price'].mean():.2f}")
+    col3.metric("Totale waarde", f"€{spl_push_df['_price'].sum():,.2f}")
+    if discount_mode != "❌ Geen kortingen (alleen prijs)":
+        col4.metric("Gem. korting 1", f"{spl_push_df['_disc1'].mean():.1f}%")
+    
+    # ============================================
+    # 5.7 PUSH NAAR PRIORITY
+    # ============================================
+    st.divider()
+    
+    # Priority API configuratie
+    PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
+    PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
+    
+    # Toon wat er wordt aangemaakt
+    st.write("**Prijslijst die wordt aangemaakt:**")
+    
+    header_info = {
+        "SUPPLNAME": suppl_name,
+        "SUPNAME": sup_name,
+        "SUPPLDATE": suppl_date.strftime('%d/%m/%Y'),
+        "CODE": currency_code
+    }
+    if suppl_des:
+        header_info["SUPPLDES"] = suppl_des
+    if expiry_date:
+        header_info["EXPIRYDATE"] = expiry_date.strftime('%d/%m/%Y')
+    if mnf_name:
+        header_info["MNFNAME"] = mnf_name
+    
+    st.json(header_info)
+    
+    # Push knoppen
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        spl_push_button = st.button(
+            f"🚀 Push prijslijst met {len(spl_push_df)} artikelen naar Priority",
+            type="primary",
+            use_container_width=True,
+            key="spl_push_to_priority"
+        )
+    
+    with col2:
+        spl_dry_run = st.checkbox("🧪 Test mode", value=True, key="spl_dry_run", help="Simuleert push zonder echte API calls")
+    
+    if spl_push_button:
+        import requests
+        import urllib.parse
+        import time
+        
+        # Progress
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.text("⏳ Voorbereiden prijslijst data...")
+        
+        # ============================================
+        # STAP 1: BOUW PAYLOAD
+        # ============================================
+        
+        # Header payload
+        header_payload = {
+            "SUPPLNAME": suppl_name,
+            "SUPNAME": sup_name,
+            "SUPPLDATE": format_date_for_priority(suppl_date),
+            "CODE": currency_code
+        }
+        
+        # Optionele velden
+        if suppl_des:
+            header_payload["SUPPLDES"] = suppl_des
+        if expiry_date:
+            header_payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
+        if mnf_name:
+            header_payload["MNFNAME"] = mnf_name
+        if multiply_price != 1.0:
+            header_payload["MULTIPLYPRICE"] = multiply_price
+        # Subform items (SPARTPRICE_SUBFORM)
+        subform_items = []
+        
+        for idx, (_, row) in enumerate(spl_push_df.iterrows()):
+            partname = str(row[spl_partname_col]).strip()
+            price = row['_price']
+            quant = row['_quant']
+            
+            item = {
+                "PARTNAME": partname,
+                "QUANT": int(quant),
+                "PRICE": round(float(price), 2)
+            }
+            
+            # Voeg kortingen toe indien van toepassing
+            if discount_mode != "❌ Geen kortingen (alleen prijs)":
+                disc1 = row.get('_disc1', 0.0)
+                disc2 = row.get('_disc2', 0.0)
+                disc3 = row.get('_disc3', 0.0)
+                
+                if disc1 and disc1 > 0:
+                    item["ZVAR_VDISC1"] = round(float(disc1), 2)
+                if disc2 and disc2 > 0:
+                    item["ZVAR_VDISC2"] = round(float(disc2), 2)
+                if disc3 and disc3 > 0:
+                    item["ZVAR_VDISC3"] = round(float(disc3), 2)
+            
+            subform_items.append(item)
+        
+        # Voeg subform toe aan header
+        header_payload["SPARTPRICE_SUBFORM"] = subform_items
+        
+        progress_bar.progress(0.1)
+        status_text.text(f"⏳ Payload voorbereid: {len(subform_items)} artikelen")
+        
+        # ============================================
+        # STAP 2: TOON PAYLOAD (DEBUG)
+        # ============================================
+        
+        with st.expander("🔧 Debug: Bekijk volledige payload"):
+            # Toon eerste paar items
+            debug_payload = header_payload.copy()
+            debug_payload["SPARTPRICE_SUBFORM"] = subform_items[:5]
+            st.json(debug_payload)
+            if len(subform_items) > 5:
+                st.caption(f"... en {len(subform_items) - 5} meer items")
+        
+        # ============================================
+        # STAP 3: PUSH NAAR PRIORITY
+        # ============================================
+        
+        if spl_dry_run:
+            # Simuleer succes
+            progress_bar.progress(0.5)
+            status_text.text("🧪 Test mode: Simuleren van API call...")
+            time.sleep(1)
+            
+            progress_bar.progress(1.0)
+            status_text.empty()
+            progress_bar.empty()
+            
+            st.success(f"🧪 **Test mode**: Prijslijst zou succesvol aangemaakt worden met {len(subform_items)} artikelen.")
+            
+            # Toon wat er zou worden verstuurd
+            st.write("**Samenvatting (test mode):**")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Prijslijstcode", suppl_name)
+            col2.metric("Leverancier", sup_name)
+            col3.metric("Artikelen", len(subform_items))
+            
+            # Sla resultaten op voor eventuele download
+            st.session_state['spl_push_result'] = {
+                'status': 'test_success',
+                'payload': header_payload,
+                'item_count': len(subform_items)
+            }
+            
+        else:
+            # Echte API call
+            try:
+                progress_bar.progress(0.3)
+                status_text.text("⏳ Verbinden met Priority API...")
+                
+                url = f"{PRIORITY_BASE}SUPPRICELIST"
+                headers = {
+                    'Authorization': PRIORITY_AUTH,
+                    'Content-Type': 'application/json'
+                }
+                
+                progress_bar.progress(0.5)
+                status_text.text(f"⏳ Versturen prijslijst met {len(subform_items)} artikelen...")
+                
+                response = requests.post(
+                    url,
+                    json=header_payload,
+                    headers=headers,
+                    timeout=120  # Langere timeout voor grote payloads
+                )
+                
+                progress_bar.progress(0.9)
+                status_text.text("⏳ Verwerken response...")
+                
+                if response.status_code in [200, 201]:
+                    progress_bar.progress(1.0)
+                    status_text.empty()
+                    progress_bar.empty()
+                    
+                    st.success(f"🎉 Prijslijst **{suppl_name}** succesvol aangemaakt met {len(subform_items)} artikelen!")
+                    
+                    # Toon response
+                    try:
+                        response_data = response.json()
+                        with st.expander("📄 API Response"):
+                            st.json(response_data)
+                    except:
+                        pass
+                    
+                    # Sla resultaat op
+                    st.session_state['spl_push_result'] = {
+                        'status': 'success',
+                        'payload': header_payload,
+                        'item_count': len(subform_items),
+                        'response': response.text[:1000] if response.text else None
+                    }
+                    
+                else:
+                    progress_bar.empty()
+                    status_text.empty()
+                    
+                    # Parse error
+                    error_msg = f"HTTP {response.status_code}"
+                    error_detail = ""
+                    
+                    try:
+                        error_data = response.json()
+                        if 'error' in error_data:
+                            error_msg = error_data['error'].get('message', error_msg)
+                            error_detail = error_data['error'].get('innererror', {}).get('message', '')
+                    except:
+                        error_detail = response.text[:500] if response.text else ""
+                    
+                    st.error(f"❌ Fout bij aanmaken prijslijst: {error_msg}")
+                    
+                    if error_detail:
+                        with st.expander("🔍 Error details"):
+                            st.code(error_detail)
+                    
+                    # Sla resultaat op voor retry
+                    st.session_state['spl_push_result'] = {
+                        'status': 'error',
+                        'payload': header_payload,
+                        'item_count': len(subform_items),
+                        'error': error_msg,
+                        'error_detail': error_detail
+                    }
+            
+            except requests.exceptions.Timeout:
+                progress_bar.empty()
+                status_text.empty()
+                
+                st.error("❌ Timeout: De request duurde te lang. Probeer opnieuw of verminder het aantal artikelen.")
+                
+                st.session_state['spl_push_result'] = {
+                    'status': 'timeout',
+                    'payload': header_payload,
+                    'item_count': len(subform_items)
+                }
+            
+            except requests.exceptions.RequestException as e:
+                progress_bar.empty()
+                status_text.empty()
+                
+                st.error(f"❌ Verbindingsfout: {str(e)}")
+                
+                st.session_state['spl_push_result'] = {
+                    'status': 'connection_error',
+                    'payload': header_payload,
+                    'item_count': len(subform_items),
+                    'error': str(e)
+                }
+        
+        # ============================================
+        # STAP 4: DOWNLOAD OPTIES
+        # ============================================
+        st.divider()
+        st.subheader("📥 Download")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Download payload als JSON
+            import json
+            payload_json = json.dumps(header_payload, indent=2, ensure_ascii=False)
+            
+            st.download_button(
+                label="📥 Download payload (JSON)",
+                data=payload_json,
+                file_name=f"prijslijst_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.json",
+                mime="application/json",
+                key="download_spl_payload"
+            )
+        
+        with col2:
+            # Download artikellijst als Excel
+            export_df = spl_push_df[[spl_partname_col, '_quant', '_price']].copy()
+            export_df.columns = ['Artikelnummer', 'Aantal', 'Prijs']
+            
+            if discount_mode != "❌ Geen kortingen (alleen prijs)":
+                export_df['Korting 1 (%)'] = spl_push_df['_disc1']
+                export_df['Korting 2 (%)'] = spl_push_df['_disc2']
+                export_df['Korting 3 (%)'] = spl_push_df['_disc3']
+            
+            st.download_button(
+                label="📥 Download artikellijst (Excel)",
+                data=convert_to_excel(export_df),
+                file_name=f"prijslijst_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_spl_articles"
+            )
+    
+    # ============================================
+    # 5.8 RETRY BIJ FOUT
+    # ============================================
+    if 'spl_push_result' in st.session_state:
+        result = st.session_state['spl_push_result']
+        
+        if result['status'] in ['error', 'timeout', 'connection_error']:
+            st.divider()
+            st.subheader("🔄 Opnieuw proberen")
+            
+            st.warning(f"De vorige poging is mislukt. Je kunt het opnieuw proberen.")
+            
+            if result['status'] == 'timeout':
+                st.info("💡 Tip: Bij een timeout kun je proberen om minder artikelen tegelijk te versturen.")
+                
+                # Optie om in batches te versturen
+                batch_size = st.number_input(
+                    "Batch grootte (artikelen per request):",
+                    min_value=10,
+                    max_value=500,
+                    value=100,
+                    step=10,
+                    key="spl_batch_size"
+                )
+                
+                if st.button("🔄 Retry in batches", key="spl_retry_batches"):
+                    st.info("⚠️ Batch modus is nog niet geïmplementeerd. Neem contact op met support.")
+            
+            else:
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    if st.button("🔄 Opnieuw proberen", type="secondary", use_container_width=True, key="spl_retry"):
+                        # Reset result en herlaad pagina
+                        del st.session_state['spl_push_result']
+                        st.rerun()
+                
+                with col2:
+                    # Optie om test mode te gebruiken
+                    st.checkbox("🧪 Als test", value=True, key="spl_retry_test")
     # ============================================
