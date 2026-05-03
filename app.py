@@ -504,22 +504,6 @@ if 'final_result' in st.session_state:
         column_config=col_config
     )
     
-    # Eerste kolom (artikelnummer) als tekst
-    first_col = display_df.columns[0]
-    col_config[first_col] = st.column_config.TextColumn(first_col)
-    
-    # Extra kolommen ook als tekst
-    for col in own_extra_cols:
-        if col in display_df.columns:
-            col_config[col] = st.column_config.TextColumn(col)
-    
-    st.dataframe(
-        display_df_styled,
-        use_container_width=True,
-        height=400,
-        column_config=col_config
-    )
-    
     st.divider()
     
     # ============================================
