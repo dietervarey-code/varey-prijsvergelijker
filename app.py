@@ -2257,12 +2257,11 @@ if 'final_result' in st.session_state:
                     # Optie om test mode te gebruiken
                     st.checkbox("🧪 Als test", value=True, key="spl_retry_test")
     # ============================================
-    # STAP 6: PUSH NAAR WEBSHOP (XANO)
+    # STAP 6: PUSH NAAR WEBSHOP (XANO) - PUBLIC ENDPOINT
     # ============================================
     st.divider()
-    st.header("🛒 Stap 6: Webshop prijsupdate (Xano)")
+    st.header("🛒 Stap 6: Webshop prijsupdate (Xano) (Public endpoint)")
 
-    # Check of er data is
     if 'final_result' not in st.session_state:
         st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
         st.stop()
@@ -2275,39 +2274,35 @@ if 'final_result' in st.session_state:
     # ============================================
     st.subheader("📋 Prijslijst gegevens")
 
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with col1:
+    with c1:
         xano_pricelist_name = st.text_input(
             "Prijslijst naam (pricelist_name):",
             value="",
             key="xano_pricelist_name",
-            help="Naam/code van de prijslijst"
         )
 
-    with col2:
+    with c2:
         xano_pricelist_date = st.date_input(
             "Prijslijst datum (pricelist_date):",
             value=None,
             format="DD/MM/YYYY",
             key="xano_pricelist_date",
-            help="Ingangsdatum van de prijslijst"
         )
 
-    with col3:
+    with c3:
         xano_pricelist_quantity = st.number_input(
             "Standaard aantal (pricelist_quantity):",
             min_value=1,
             value=1,
             key="xano_pricelist_quantity",
-            help="Standaard: 1"
         )
 
     if not xano_pricelist_name or not xano_pricelist_date:
         st.warning("⚠️ Vul prijslijst naam en datum in om verder te gaan.")
         st.stop()
 
-    # Xano date field: ISO is het veiligst
     def format_date_for_xano(date_obj):
         """ISO format voor Xano date fields: YYYY-MM-DD"""
         if date_obj is None:
@@ -2321,9 +2316,9 @@ if 'final_result' in st.session_state:
     # ============================================
     st.subheader("🔗 Kolom Mapping")
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
+    with c1:
         id_candidates = [c for c in final_result.columns if c.lower() == 'id' or 'xano' in c.lower() or 'webshop_id' in c.lower()]
         default_id = id_candidates[0] if id_candidates else final_result.columns[0]
 
@@ -2332,10 +2327,9 @@ if 'final_result' in st.session_state:
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_id) if default_id in final_result.columns else 0,
             key="xano_id_col",
-            help="Unieke ID van het artikel in Xano"
         )
 
-    with col2:
+    with c2:
         price_candidates = [c for c in final_result.columns if 'prijs' in c.lower() or 'price' in c.lower()]
         default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
 
@@ -2344,7 +2338,6 @@ if 'final_result' in st.session_state:
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
             key="xano_price_col",
-            help="Deze waarde wordt naar 'price' en 'pricelist_price' gestuurd"
         )
 
     available_extra_cols = [c for c in final_result.columns if c not in [xano_id_col, xano_price_col, status_col]]
@@ -2353,7 +2346,7 @@ if 'final_result' in st.session_state:
         "Extra kolommen in preview:",
         options=available_extra_cols,
         default=[c for c in available_extra_cols if any(x in c.lower() for x in ['name', 'naam', 'article', 'artikel', 'omschrijving'])][:3],
-        key="xano_extra_preview_cols"
+        key="xano_extra_preview_cols",
     )
 
     # ============================================
@@ -2361,13 +2354,12 @@ if 'final_result' in st.session_state:
     # ============================================
     st.subheader("📊 Welke artikelen updaten?")
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
+    c1, c2, c3 = st.columns(3)
+    with c1:
         xano_include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="xano_include_increases")
-    with col2:
+    with c2:
         xano_include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="xano_include_decreases")
-    with col3:
+    with c3:
         xano_include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="xano_include_unchanged")
 
     xano_selected_statuses = []
@@ -2423,18 +2415,16 @@ if 'final_result' in st.session_state:
 
     if xano_discount_mode == "📊 Vaste waarde voor alle artikelen":
         st.write("**Vaste kortingspercentages:**")
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            xano_fixed_disc1 = st.number_input("Korting 1 (%):", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="xano_fixed_disc1")
-        with c2:
-            xano_fixed_disc2 = st.number_input("Korting 2 (%):", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="xano_fixed_disc2")
-        with c3:
-            xano_fixed_disc3 = st.number_input("Korting 3 (%):", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key="xano_fixed_disc3")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            xano_fixed_disc1 = st.number_input("Korting 1 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc1")
+        with d2:
+            xano_fixed_disc2 = st.number_input("Korting 2 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc2")
+        with d3:
+            xano_fixed_disc3 = st.number_input("Korting 3 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc3")
 
     elif xano_discount_mode == "📁 Per familie/artikelgroep":
         group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie', 'lijn', 'line'])]
-
         xano_discount_group_col = st.selectbox(
             "Groepeer op kolom:",
             options=final_result.columns.tolist(),
@@ -2482,17 +2472,16 @@ if 'final_result' in st.session_state:
 
     elif xano_discount_mode == "📋 Uit kolommen in bestand":
         st.write("**Selecteer kolommen met kortingspercentages:**")
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
+        d1, d2, d3 = st.columns(3)
+        with d1:
             xano_disc1_col = st.selectbox("Korting 1 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc1_col")
             if xano_disc1_col == '(geen)':
                 xano_disc1_col = None
-        with c2:
+        with d2:
             xano_disc2_col = st.selectbox("Korting 2 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc2_col")
             if xano_disc2_col == '(geen)':
                 xano_disc2_col = None
-        with c3:
+        with d3:
             xano_disc3_col = st.selectbox("Korting 3 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc3_col")
             if xano_disc3_col == '(geen)':
                 xano_disc3_col = None
@@ -2501,36 +2490,23 @@ if 'final_result' in st.session_state:
     # 6.5 BEREKEN FINALE DATA
     # ============================================
     def get_xano_discount_values(row):
-        disc1 = disc2 = disc3 = 0.0
-
         if xano_discount_mode == "❌ Geen kortingen":
             return 0.0, 0.0, 0.0
-
         if xano_discount_mode == "📊 Vaste waarde voor alle artikelen":
             return float(xano_fixed_disc1), float(xano_fixed_disc2), float(xano_fixed_disc3)
-
         if xano_discount_mode == "📁 Per familie/artikelgroep":
             group = str(row.get(xano_discount_group_col, ''))
             vals = xano_group_discounts.get(group, {'disc1': 0.0, 'disc2': 0.0, 'disc3': 0.0})
             return float(vals['disc1']), float(vals['disc2']), float(vals['disc3'])
-
         if xano_discount_mode == "📋 Uit kolommen in bestand":
             def to_pct(v):
                 if pd.isna(v) or str(v).strip() == '':
                     return 0.0
                 return float(str(v).replace(',', '.').replace('%', '').strip())
-
-            try:
-                if xano_disc1_col:
-                    disc1 = to_pct(row.get(xano_disc1_col))
-                if xano_disc2_col:
-                    disc2 = to_pct(row.get(xano_disc2_col))
-                if xano_disc3_col:
-                    disc3 = to_pct(row.get(xano_disc3_col))
-            except:
-                pass
+            disc1 = to_pct(row.get(xano_disc1_col)) if xano_disc1_col else 0.0
+            disc2 = to_pct(row.get(xano_disc2_col)) if xano_disc2_col else 0.0
+            disc3 = to_pct(row.get(xano_disc3_col)) if xano_disc3_col else 0.0
             return float(disc1), float(disc2), float(disc3)
-
         return 0.0, 0.0, 0.0
 
     def parse_xano_price(value):
@@ -2549,7 +2525,6 @@ if 'final_result' in st.session_state:
     xano_push_df['_disc3'] = [d[2] for d in disc_data]
 
     xano_push_df = xano_push_df[xano_push_df['_price'].notna()].copy()
-
     if len(xano_push_df) == 0:
         st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
         st.stop()
@@ -2586,21 +2561,20 @@ if 'final_result' in st.session_state:
 
     if len(xano_push_df) > 50:
         st.caption(f"... en {len(xano_push_df) - 50} meer artikelen")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Artikelen", len(xano_push_df))
-    col2.metric("Gem. prijs", f"€{xano_push_df['_price'].mean():.2f}")
-    col3.metric("Totale waarde", f"€{xano_push_df['_price'].sum():,.2f}")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Artikelen", len(xano_push_df))
+    m2.metric("Gem. prijs", f"€{xano_push_df['_price'].mean():.2f}")
+    m3.metric("Totale waarde", f"€{xano_push_df['_price'].sum():,.2f}")
     if xano_discount_mode != "❌ Geen kortingen":
-        col4.metric("Gem. korting 1", f"{xano_push_df['_disc1'].mean():.1f}%")
+        m4.metric("Gem. korting 1", f"{xano_push_df['_disc1'].mean():.1f}%")
 
     # ============================================
-    # 6.7 PUSH NAAR XANO
+    # 6.7 PUSH NAAR XANO (PUBLIC)
     # ============================================
     st.divider()
 
-    # Xano API configuratie (NIEUWE API GROUP)
     XANO_BASE = "https://xugs-gkkp-x831.g7.xano.io/api:wvc8yP8V"
-    XANO_TOKEN = "eyJhbGciOiJBMjU2S1ciLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwiemlwIjoiREVGIn0.o0Lyrpf8c1itkUf9NE5CZPy28Ys428XOSCyuDa4PvVZlXMneM24-brnHTnyfPeT3mmMkjuOWCKoRbv6h9S21IojaUhwYg4i_.HWV6aLpCs3NfKRkJRzmlIA.Z2Vrkk7h-ALHsvcfP5NftNpylN9FGfBwWTqrTf1eN1_cLqFdy4RTyf-KDvnxy6E86Ej6ldMGGIDEk7V_tujMvgl-6JF1q319AIS6ZkzBhdTakz3SamR3ntcrZiBb-Hx3FWsjY4dcUd0LI-Iqh1kvlFof-EfIbaIVryH6IKz2PoQ.ILN-JjRROmn8W3w2FpAoc2AudnSPj2MZ9oXzcxXtcoI"
     BATCH_SIZE = 200
 
     st.write("**Update samenvatting:**")
@@ -2611,6 +2585,68 @@ if 'final_result' in st.session_state:
         "Aantal artikelen": len(xano_push_df)
     })
 
+    # ============================================
+    # 6.7A ENDPOINT TEST (GET + PATCH) - PUBLIC
+    # ============================================
+    st.subheader("🧪 Xano endpoint test (GET + PATCH)")
+
+    default_test_id = ""
+    try:
+        default_test_id = str(xano_push_df[xano_id_col].iloc[0]).strip().replace(".0", "")
+    except:
+        pass
+
+    test_id = st.text_input("Test Xano ID:", value=default_test_id, key="xano_test_id")
+    tc1, tc2, tc3 = st.columns([2, 2, 3])
+
+    with tc1:
+        do_test_get = st.button("Test GET", key="xano_btn_test_get", use_container_width=True)
+    with tc2:
+        do_test_patch = st.button("Test PATCH (1 record)", key="xano_btn_test_patch", use_container_width=True)
+    with tc3:
+        test_price = st.number_input("Test prijs (PATCH):", min_value=0.0, value=1.23, step=0.01, key="xano_test_price")
+
+    if do_test_get or do_test_patch:
+        import requests
+
+        if not test_id or str(test_id).strip() == "":
+            st.error("Geen test ID ingevuld.")
+        else:
+            url = f"{XANO_BASE.rstrip('/')}/article/{str(test_id).strip()}"
+            headers = {"Content-Type": "application/json"}  # PUBLIC
+
+            st.caption(f"URL: {url}")
+            st.caption("Headers: Content-Type=application/json (public endpoint)")
+
+            if do_test_get:
+                try:
+                    r = requests.get(url, headers=headers, timeout=30)
+                    st.write("Status:", r.status_code)
+                    st.code(r.text[:2000] if r.text else "(geen body)")
+                except Exception as e:
+                    st.error(f"GET fout: {e}")
+
+            if do_test_patch:
+                payload = {
+                    "price": float(test_price),
+                    "pricelist_name": xano_pricelist_name,
+                    "pricelist_date": format_date_for_xano(xano_pricelist_date),
+                    "pricelist_quantity": int(xano_pricelist_quantity),
+                    "pricelist_price": float(test_price),
+                    "pricelist_disc1": 0.0,
+                    "pricelist_disc2": 0.0,
+                    "pricelist_disc3": 0.0
+                }
+
+                with st.expander("Payload (PATCH)"):
+                    st.json(payload)
+
+                try:
+                    r = requests.patch(url, json=payload, headers=headers, timeout=30)
+                    st.write("Status:", r.status_code)
+                    st.code(r.text[:2000] if r.text else "(geen body - mogelijk 204)")
+                except Exception as e:
+                    st.error(f"PATCH fout: {e}")
     col1, col2 = st.columns([3, 1])
 
     with col1:
@@ -2643,7 +2679,7 @@ if 'final_result' in st.session_state:
             if article_id.endswith('.0'):
                 article_id = article_id[:-2]
 
-            price = row['_price']
+            price = float(row['_price'])
             disc1 = float(row['_disc1'])
             disc2 = float(row['_disc2'])
             disc3 = float(row['_disc3'])
@@ -2652,77 +2688,74 @@ if 'final_result' in st.session_state:
             status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel ID {article_id}")
 
             payload = {
-                "price": float(price),
+                "price": price,
                 "pricelist_name": xano_pricelist_name,
                 "pricelist_date": formatted_date,
                 "pricelist_quantity": int(xano_pricelist_quantity),
-                "pricelist_price": float(price),
+                "pricelist_price": price,
                 "pricelist_disc1": disc1,
                 "pricelist_disc2": disc2,
                 "pricelist_disc3": disc3
             }
 
             if xano_dry_run:
-                results.append({'id': article_id, 'price': price, 'status': '✅ Succes (test mode)', 'error': None})
+                results.append({"id": article_id, "price": price, "status": "✅ Succes (test mode)", "error": None})
                 success_count += 1
                 time.sleep(0.01)
-            else:
-                try:
-                    url = f"{XANO_BASE.rstrip('/')}/article/{article_id}"
-                    headers = {
-                        "Authorization": XANO_TOKEN,   # belangrijk: GEEN "Bearer "
-                        "Content-Type": "application/json"
-                    }
+                continue
 
-                    r = requests.patch(url, json=payload, headers=headers, timeout=30)
+            try:
+                url = f"{XANO_BASE.rstrip('/')}/article/{article_id}"
+                headers = {"Content-Type": "application/json"}  # PUBLIC
 
-                    if r.status_code in [200, 204]:
-                        results.append({'id': article_id, 'price': price, 'status': '✅ Succes', 'error': None})
-                        success_count += 1
-                    else:
-                        msg = f"HTTP {r.status_code}"
-                        try:
-                            j = r.json()
-                            msg = j.get("message") or j.get("error") or msg
-                        except:
-                            if r.text:
-                                msg = r.text[:300]
-                        results.append({'id': article_id, 'price': price, 'status': '❌ Mislukt', 'error': msg})
-                        error_count += 1
+                r = requests.patch(url, json=payload, headers=headers, timeout=30)
 
-                except requests.exceptions.Timeout:
-                    results.append({'id': article_id, 'price': price, 'status': '❌ Timeout', 'error': 'Request timeout na 30 seconden'})
-                    error_count += 1
-                except requests.exceptions.RequestException as e:
-                    results.append({'id': article_id, 'price': price, 'status': '❌ Fout', 'error': str(e)})
+                if r.status_code in [200, 204]:
+                    results.append({"id": article_id, "price": price, "status": "✅ Succes", "error": None})
+                    success_count += 1
+                else:
+                    msg = f"HTTP {r.status_code}"
+                    try:
+                        j = r.json()
+                        msg = j.get("message") or j.get("error") or j.get("code") or msg
+                    except:
+                        if r.text:
+                            msg = r.text[:300]
+                    results.append({"id": article_id, "price": price, "status": "❌ Mislukt", "error": msg})
                     error_count += 1
 
-                if (idx + 1) % BATCH_SIZE == 0:
-                    time.sleep(0.5)
+            except requests.exceptions.Timeout:
+                results.append({"id": article_id, "price": price, "status": "❌ Timeout", "error": "Request timeout na 30 seconden"})
+                error_count += 1
+            except requests.exceptions.RequestException as e:
+                results.append({"id": article_id, "price": price, "status": "❌ Fout", "error": str(e)})
+                error_count += 1
+
+            if (idx + 1) % BATCH_SIZE == 0:
+                time.sleep(0.5)
 
         progress_bar.empty()
         status_text.empty()
 
         st.subheader("📊 Push Resultaten")
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("✅ Succesvol", success_count)
-        c2.metric("❌ Mislukt", error_count)
-        c3.metric("📊 Totaal", len(results))
+        rc1, rc2, rc3 = st.columns(3)
+        rc1.metric("✅ Succesvol", success_count)
+        rc2.metric("❌ Mislukt", error_count)
+        rc3.metric("📊 Totaal", len(results))
 
         results_df = pd.DataFrame(results)
 
-        # opslaan voor retry
-        st.session_state['xano_push_results'] = results_df
-        st.session_state['xano_push_df_for_retry'] = xano_push_df.copy()
-        st.session_state['xano_id_col_for_retry'] = xano_id_col
-        st.session_state['xano_pl_name_for_retry'] = xano_pricelist_name
-        st.session_state['xano_pl_date_for_retry'] = xano_pricelist_date
-        st.session_state['xano_pl_qty_for_retry'] = int(xano_pricelist_quantity)
+        st.session_state["xano_push_results"] = results_df
+        st.session_state["xano_push_df_for_retry"] = xano_push_df.copy()
+        st.session_state["xano_id_col_for_retry"] = xano_id_col
+        st.session_state["xano_pl_name_for_retry"] = xano_pricelist_name
+        st.session_state["xano_pl_date_for_retry"] = xano_pricelist_date
+        st.session_state["xano_pl_qty_for_retry"] = int(xano_pricelist_quantity)
 
         if error_count > 0:
             st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt.")
-            st.dataframe(results_df[results_df['status'].str.contains('❌')], use_container_width=True, hide_index=True)
+            st.dataframe(results_df[results_df["status"].str.contains("❌")], use_container_width=True, hide_index=True)
         else:
             st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt in de webshop!")
 
@@ -2740,15 +2773,15 @@ if 'final_result' in st.session_state:
     # ============================================
     # 6.9 RETRY MISLUKTE ITEMS
     # ============================================
-    if 'xano_push_results' in st.session_state:
-        results_df = st.session_state['xano_push_results']
-        failed = results_df[results_df['status'].str.contains('❌')]
+    if "xano_push_results" in st.session_state:
+        results_df = st.session_state["xano_push_results"]
+        failed = results_df[results_df["status"].str.contains("❌")]
 
         if len(failed) > 0:
             st.divider()
             st.subheader("🔄 Opnieuw proberen")
-            st.write(f"**{len(failed)} artikelen** zijn niet bijgewerkt.")
 
+            st.write(f"**{len(failed)} artikelen** zijn niet bijgewerkt.")
             with st.expander("👀 Bekijk mislukte items"):
                 st.dataframe(failed, use_container_width=True, hide_index=True)
 
@@ -2756,20 +2789,20 @@ if 'final_result' in st.session_state:
             with c1:
                 retry_btn = st.button(f"🔄 Retry {len(failed)} mislukte items", type="secondary", use_container_width=True, key="xano_retry_failed")
             with c2:
-                retry_dry_run = st.checkbox("🧪 Test mode", value=True, key="xano_retry_dry_run")
+                retry_dry = st.checkbox("🧪 Test mode", value=True, key="xano_retry_dry_run")
 
             if retry_btn:
                 import requests
                 import time
 
-                retry_push_df = st.session_state['xano_push_df_for_retry']
-                retry_id_col = st.session_state['xano_id_col_for_retry']
-                retry_name = st.session_state['xano_pl_name_for_retry']
-                retry_date = st.session_state['xano_pl_date_for_retry']
-                retry_qty = st.session_state['xano_pl_qty_for_retry']
+                retry_push_df = st.session_state["xano_push_df_for_retry"]
+                retry_id_col = st.session_state["xano_id_col_for_retry"]
+                retry_name = st.session_state["xano_pl_name_for_retry"]
+                retry_date = st.session_state["xano_pl_date_for_retry"]
+                retry_qty = st.session_state["xano_pl_qty_for_retry"]
 
-                failed_ids = failed['id'].astype(str).tolist()
-                retry_df = retry_push_df[retry_push_df[retry_id_col].astype(str).str.replace('.0', '', regex=False).isin(failed_ids)].copy()
+                failed_ids = failed["id"].astype(str).tolist()
+                retry_df = retry_push_df[retry_push_df[retry_id_col].astype(str).str.replace(".0", "", regex=False).isin(failed_ids)].copy()
 
                 retry_results = []
                 rs = re = 0
@@ -2781,13 +2814,13 @@ if 'final_result' in st.session_state:
 
                 for i, (_, row) in enumerate(retry_df.iterrows()):
                     aid = str(row[retry_id_col]).strip()
-                    if aid.endswith('.0'):
+                    if aid.endswith(".0"):
                         aid = aid[:-2]
 
-                    price = float(row['_price'])
-                    disc1 = float(row['_disc1'])
-                    disc2 = float(row['_disc2'])
-                    disc3 = float(row['_disc3'])
+                    price = float(row["_price"])
+                    disc1 = float(row["_disc1"])
+                    disc2 = float(row["_disc2"])
+                    disc3 = float(row["_disc3"])
 
                     p.progress((i + 1) / len(retry_df))
                     t.text(f"🔄 Retry: {i + 1}/{len(retry_df)} - Artikel ID {aid}")
@@ -2803,50 +2836,47 @@ if 'final_result' in st.session_state:
                         "pricelist_disc3": disc3
                     }
 
-                    if retry_dry_run:
-                        retry_results.append({'id': aid, 'price': price, 'status': '✅ Succes (test mode)', 'error': None})
+                    if retry_dry:
+                        retry_results.append({"id": aid, "price": price, "status": "✅ Succes (test mode)", "error": None})
                         rs += 1
                         time.sleep(0.01)
-                    else:
-                        try:
-                            url = f"{XANO_BASE.rstrip('/')}/article/{aid}"
-                            headers = {
-                                "Authorization": XANO_TOKEN,   # geen Bearer
-                                "Content-Type": "application/json"
-                            }
-                            r = requests.patch(url, json=payload, headers=headers, timeout=30)
+                        continue
 
-                            if r.status_code in [200, 204]:
-                                retry_results.append({'id': aid, 'price': price, 'status': '✅ Succes', 'error': None})
-                                rs += 1
-                            else:
-                                msg = f"HTTP {r.status_code}"
-                                try:
-                                    j = r.json()
-                                    msg = j.get("message") or j.get("error") or msg
-                                except:
-                                    if r.text:
-                                        msg = r.text[:300]
-                                retry_results.append({'id': aid, 'price': price, 'status': '❌ Mislukt', 'error': msg})
-                                re += 1
-                        except Exception as e:
-                            retry_results.append({'id': aid, 'price': price, 'status': '❌ Fout', 'error': str(e)})
+                    try:
+                        url = f"{XANO_BASE.rstrip('/')}/article/{aid}"
+                        headers = {"Content-Type": "application/json"}  # PUBLIC
+                        r = requests.patch(url, json=payload, headers=headers, timeout=30)
+
+                        if r.status_code in [200, 204]:
+                            retry_results.append({"id": aid, "price": price, "status": "✅ Succes", "error": None})
+                            rs += 1
+                        else:
+                            msg = f"HTTP {r.status_code}"
+                            try:
+                                j = r.json()
+                                msg = j.get("message") or j.get("error") or j.get("code") or msg
+                            except:
+                                if r.text:
+                                    msg = r.text[:300]
+                            retry_results.append({"id": aid, "price": price, "status": "❌ Mislukt", "error": msg})
                             re += 1
-                        time.sleep(0.1)
+                    except Exception as e:
+                        retry_results.append({"id": aid, "price": price, "status": "❌ Fout", "error": str(e)})
+                        re += 1
+
+                    time.sleep(0.1)
 
                 p.empty()
                 t.empty()
 
                 st.subheader("📊 Retry Resultaten")
-                c1, c2 = st.columns(2)
-                c1.metric("✅ Nu succesvol", rs)
-                c2.metric("❌ Nog steeds mislukt", re)
+                cc1, cc2 = st.columns(2)
+                cc1.metric("✅ Nu succesvol", rs)
+                cc2.metric("❌ Nog steeds mislukt", re)
 
                 retry_df_res = pd.DataFrame(retry_results)
-
-                # update opgeslagen resultaten
-                original_success = results_df[~results_df['status'].str.contains('❌')]
-                st.session_state['xano_push_results'] = pd.concat([original_success, retry_df_res], ignore_index=True)
+                original_success = results_df[~results_df["status"].str.contains("❌")]
+                st.session_state["xano_push_results"] = pd.concat([original_success, retry_df_res], ignore_index=True)
 
                 st.download_button(
                     label="📥 Download retry resultaten (Excel)",
@@ -2855,83 +2885,4 @@ if 'final_result' in st.session_state:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_xano_retry_results"
                 )
-        # ============================================
-    # 6.7A ENDPOINT TEST (GET + PATCH)
-    # ============================================
-    st.subheader("🧪 Xano endpoint test (GET + PATCH)")
-
-    # Kies een test-ID (bv. eerste uit de lijst)
-    default_test_id = ""
-    try:
-        default_test_id = str(xano_push_df[xano_id_col].iloc[0]).strip().replace(".0", "")
-    except:
-        pass
-
-    test_id = st.text_input("Test Xano ID:", value=default_test_id, key="xano_test_id")
-
-    c1, c2, c3 = st.columns([2, 2, 3])
-
-    with c1:
-        do_test_get = st.button("Test GET", key="xano_btn_test_get", use_container_width=True)
-
-    with c2:
-        do_test_patch = st.button("Test PATCH (1 record)", key="xano_btn_test_patch", use_container_width=True)
-
-    with c3:
-        test_price = st.number_input(
-            "Test prijs (PATCH):",
-            min_value=0.0,
-            value=1.23,
-            step=0.01,
-            key="xano_test_price"
-        )
-
-    if do_test_get or do_test_patch:
-        import requests
-
-        if not test_id or str(test_id).strip() == "":
-            st.error("Geen test ID ingevuld.")
-        else:
-            # Bouw URL
-            base = XANO_BASE.rstrip("/")
-            url = f"{base}/article/{str(test_id).strip()}"
-
-            # Belangrijk: Authorization zonder 'Bearer'
-            headers = {
-                "Authorization": XANO_TOKEN,
-                "Content-Type": "application/json"
-            }
-
-            st.caption(f"URL: {url}")
-            st.caption("Headers: Authorization=<token>, Content-Type=application/json")
-
-            if do_test_get:
-                try:
-                    r = requests.get(url, headers=headers, timeout=30)
-                    st.write("Status:", r.status_code)
-                    st.code(r.text[:2000] if r.text else "(geen body)")
-                except Exception as e:
-                    st.error(f"GET fout: {e}")
-
-            if do_test_patch:
-                payload = {
-                    "price": float(test_price),
-                    "pricelist_name": xano_pricelist_name,
-                    "pricelist_date": format_date_for_xano(xano_pricelist_date),
-                    "pricelist_quantity": int(xano_pricelist_quantity),
-                    "pricelist_price": float(test_price),
-                    "pricelist_disc1": 0.0,
-                    "pricelist_disc2": 0.0,
-                    "pricelist_disc3": 0.0
-                }
-
-                with st.expander("Payload (PATCH)"):
-                    st.json(payload)
-
-                try:
-                    r = requests.patch(url, json=payload, headers=headers, timeout=30)
-                    st.write("Status:", r.status_code)
-                    st.code(r.text[:2000] if r.text else "(geen body - mogelijk 204)")
-                except Exception as e:
-                    st.error(f"PATCH fout: {e}")
     # ============================================
