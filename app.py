@@ -2257,10 +2257,10 @@ if 'final_result' in st.session_state:
                     # Optie om test mode te gebruiken
                     st.checkbox("🧪 Als test", value=True, key="spl_retry_test")
     # ============================================
-    # STAP 6: PUSH NAAR WEBSHOP (XANO) - PUBLIC ENDPOINT
+    # STAP 6: EXPORT VOOR WEBSHOP (XANO IMPORT)
     # ============================================
     st.divider()
-    st.header("🛒 Stap 6: Webshop prijsupdate (Xano) (Public endpoint)")
+    st.header("📤 Stap 6: Export voor webshop import (Xano)")
 
     if 'final_result' not in st.session_state:
         st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
@@ -2269,64 +2269,72 @@ if 'final_result' in st.session_state:
     final_result = st.session_state['final_result']
     status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
 
-    # ============================================
-    # 6.1 PRIJSLIJST GEGEVENS
-    # ============================================
-    st.subheader("📋 Prijslijst gegevens")
+    # ----------------------------
+    # 6.1 Prijslijst info
+    # ----------------------------
+    st.subheader("📋 Prijslijst info")
 
     c1, c2, c3 = st.columns(3)
-
     with c1:
         xano_pricelist_name = st.text_input(
-            "Prijslijst naam (pricelist_name):",
+            "pricelist_name:",
             value="",
-            key="xano_pricelist_name",
+            key="xano_export_pricelist_name"
         )
-
     with c2:
         xano_pricelist_date = st.date_input(
-            "Prijslijst datum (pricelist_date):",
+            "pricelist_date (dd/mm/jjjj):",
             value=None,
             format="DD/MM/YYYY",
-            key="xano_pricelist_date",
+            key="xano_export_pricelist_date"
         )
-
     with c3:
         xano_pricelist_quantity = st.number_input(
-            "Standaard aantal (pricelist_quantity):",
+            "pricelist_quantity (standaard):",
             min_value=1,
             value=1,
-            key="xano_pricelist_quantity",
+            key="xano_export_pricelist_quantity"
         )
 
     if not xano_pricelist_name or not xano_pricelist_date:
-        st.warning("⚠️ Vul prijslijst naam en datum in om verder te gaan.")
+        st.warning("⚠️ Vul pricelist_name en datum in.")
         st.stop()
 
-    def format_date_for_xano(date_obj):
-        """ISO format voor Xano date fields: YYYY-MM-DD"""
-        if date_obj is None:
-            return None
-        return date_obj.strftime('%Y-%m-%d')
+    # Jij gaf aan dat Xano import vaak "Jun 1, 2025" verwacht in CSV-upload
+    def format_date_for_xano_import(date_obj):
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        return f"{months[date_obj.month - 1]} {date_obj.day}, {date_obj.year}"
 
-    st.success(f"✅ Prijslijst: **{xano_pricelist_name}** per **{xano_pricelist_date.strftime('%d/%m/%Y')}**")
+    date_format_choice = st.radio(
+        "Datumformaat in export:",
+        options=["Jun 1, 2025 (Xano upload)", "2025-06-01 (ISO)"],
+        horizontal=True,
+        key="xano_export_date_format"
+    )
 
-    # ============================================
-    # 6.2 KOLOM MAPPING
-    # ============================================
-    st.subheader("🔗 Kolom Mapping")
+    if date_format_choice.startswith("Jun"):
+        export_date_str = format_date_for_xano_import(xano_pricelist_date)
+    else:
+        export_date_str = xano_pricelist_date.strftime("%Y-%m-%d")
+
+    st.info(f"📅 Export datum wordt: **{export_date_str}**")
+
+    # ----------------------------
+    # 6.2 Mapping
+    # ----------------------------
+    st.subheader("🔗 Kolom mapping")
 
     c1, c2 = st.columns(2)
 
     with c1:
         id_candidates = [c for c in final_result.columns if c.lower() == 'id' or 'xano' in c.lower() or 'webshop_id' in c.lower()]
-        default_id = id_candidates[0] if id_candidates else final_result.columns[0]
+        default_id = 'id' if 'id' in final_result.columns else (id_candidates[0] if id_candidates else final_result.columns[0])
 
         xano_id_col = st.selectbox(
-            "Kolom met Xano ID (verplicht):",
+            "Kolom met Xano id (verplicht):",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_id) if default_id in final_result.columns else 0,
-            key="xano_id_col",
+            key="xano_export_id_col"
         )
 
     with c2:
@@ -2337,552 +2345,197 @@ if 'final_result' in st.session_state:
             "Kolom met nieuwe prijs:",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
-            key="xano_price_col",
+            key="xano_export_price_col"
         )
 
-    available_extra_cols = [c for c in final_result.columns if c not in [xano_id_col, xano_price_col, status_col]]
-
-    xano_extra_preview_cols = st.multiselect(
-        "Extra kolommen in preview:",
-        options=available_extra_cols,
-        default=[c for c in available_extra_cols if any(x in c.lower() for x in ['name', 'naam', 'article', 'artikel', 'omschrijving'])][:3],
-        key="xano_extra_preview_cols",
-    )
-
-    # ============================================
-    # 6.3 FILTER SELECTIE
-    # ============================================
-    st.subheader("📊 Welke artikelen updaten?")
+    # ----------------------------
+    # 6.3 Filter selectie
+    # ----------------------------
+    st.subheader("📊 Welke artikelen opnemen?")
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        xano_include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="xano_include_increases")
+        inc_up = st.checkbox("🔴 Prijsverhogingen", value=True, key="xano_export_inc_up")
     with c2:
-        xano_include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="xano_include_decreases")
+        inc_down = st.checkbox("🟢 Prijsverlagingen", value=True, key="xano_export_inc_down")
     with c3:
-        xano_include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="xano_include_unchanged")
+        inc_same = st.checkbox("⚪ Ongewijzigd", value=False, key="xano_export_inc_same")
 
-    xano_selected_statuses = []
-    if xano_include_increases:
-        xano_selected_statuses.append('🔴 Prijsverhoging')
-    if xano_include_decreases:
-        xano_selected_statuses.append('🟢 Prijsverlaging')
-    if xano_include_unchanged:
-        xano_selected_statuses.append('⚪ Ongewijzigd')
+    selected = []
+    if inc_up: selected.append("🔴 Prijsverhoging")
+    if inc_down: selected.append("🟢 Prijsverlaging")
+    if inc_same: selected.append("⚪ Ongewijzigd")
 
-    if not xano_selected_statuses:
-        st.warning("⚠️ Selecteer minimaal één categorie.")
+    if not selected:
+        st.warning("⚠️ Selecteer minimaal één status.")
         st.stop()
 
-    xano_push_df = final_result[
-        (final_result[status_col].isin(xano_selected_statuses)) &
+    export_df = final_result[
+        (final_result[status_col].isin(selected)) &
         (final_result[xano_id_col].notna()) &
         (final_result[xano_id_col].astype(str).str.strip() != '') &
         (final_result[xano_id_col].astype(str).str.lower() != 'nan')
     ].copy()
 
-    st.info(f"📋 {len(xano_push_df)} artikelen geselecteerd met geldige Xano ID")
+    st.info(f"📦 {len(export_df)} artikelen geselecteerd voor export")
 
-    if len(xano_push_df) == 0:
-        st.warning("⚠️ Geen artikelen gevonden met geldige Xano ID.")
+    if len(export_df) == 0:
+        st.warning("⚠️ Geen rijen om te exporteren (check id kolom + filters).")
         st.stop()
 
-    # ============================================
-    # 6.4 KORTINGEN CONFIGURATIE
-    # ============================================
-    st.subheader("💰 Kortingen (pricelist_disc1, pricelist_disc2, pricelist_disc3)")
+    # ----------------------------
+    # 6.4 Kortingen (zelfde opties)
+    # ----------------------------
+    st.subheader("💰 Kortingen (optioneel)")
 
-    xano_discount_mode = st.radio(
-        "Kortingen instellen:",
+    disc_mode = st.radio(
+        "Kortingen invullen:",
         options=[
-            "❌ Geen kortingen",
+            "❌ Geen kortingen (leeg laten)",
             "📊 Vaste waarde voor alle artikelen",
             "📁 Per familie/artikelgroep",
             "📋 Uit kolommen in bestand"
         ],
-        key="xano_discount_mode",
-        horizontal=False
+        key="xano_export_disc_mode"
     )
 
-    xano_fixed_disc1 = 0.0
-    xano_fixed_disc2 = 0.0
-    xano_fixed_disc3 = 0.0
-    xano_group_discounts = {}
-    xano_discount_group_col = None
-    xano_disc1_col = None
-    xano_disc2_col = None
-    xano_disc3_col = None
+    disc1_col = disc2_col = disc3_col = None
+    fixed1 = fixed2 = fixed3 = 0.0
+    group_map = {}
+    group_col = None
 
-    if xano_discount_mode == "📊 Vaste waarde voor alle artikelen":
-        st.write("**Vaste kortingspercentages:**")
+    if disc_mode == "📊 Vaste waarde voor alle artikelen":
         d1, d2, d3 = st.columns(3)
         with d1:
-            xano_fixed_disc1 = st.number_input("Korting 1 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc1")
+            fixed1 = st.number_input("disc1 (%)", 0.0, 100.0, 0.0, 0.5, key="xano_export_fixed1")
         with d2:
-            xano_fixed_disc2 = st.number_input("Korting 2 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc2")
+            fixed2 = st.number_input("disc2 (%)", 0.0, 100.0, 0.0, 0.5, key="xano_export_fixed2")
         with d3:
-            xano_fixed_disc3 = st.number_input("Korting 3 (%):", 0.0, 100.0, 0.0, 0.5, key="xano_fixed_disc3")
+            fixed3 = st.number_input("disc3 (%)", 0.0, 100.0, 0.0, 0.5, key="xano_export_fixed3")
 
-    elif xano_discount_mode == "📁 Per familie/artikelgroep":
-        group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie', 'lijn', 'line'])]
-        xano_discount_group_col = st.selectbox(
+    elif disc_mode == "📁 Per familie/artikelgroep":
+        group_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie', 'lijn', 'line'])]
+        group_col = st.selectbox(
             "Groepeer op kolom:",
             options=final_result.columns.tolist(),
-            index=final_result.columns.tolist().index(group_col_candidates[0]) if group_col_candidates else 0,
-            key="xano_discount_group_col"
+            index=final_result.columns.tolist().index(group_candidates[0]) if group_candidates else 0,
+            key="xano_export_group_col"
         )
 
-        unique_groups = xano_push_df[xano_discount_group_col].dropna().unique().tolist()
-        unique_groups = sorted([str(g) for g in unique_groups if str(g).strip() != ''])
-
-        if 0 < len(unique_groups) <= 100:
-            st.write(f"**Kortingen per {xano_discount_group_col}** ({len(unique_groups)} groepen):")
-            st.caption("💡 Tip: je kan waardes kopiëren/plakken in de tabel (Ctrl+C / Ctrl+V)")
-
-            xano_group_discount_df = pd.DataFrame({
-                'Groep': unique_groups,
-                'Korting 1 (%)': [0.0] * len(unique_groups),
-                'Korting 2 (%)': [0.0] * len(unique_groups),
-                'Korting 3 (%)': [0.0] * len(unique_groups)
+        groups = sorted([str(g) for g in export_df[group_col].dropna().unique() if str(g).strip() != ''])
+        if len(groups) == 0:
+            st.warning("⚠️ Geen groepen gevonden.")
+        else:
+            st.caption("Kopieer/plak waardes in de tabel indien gewenst.")
+            group_discount_df = pd.DataFrame({
+                "Groep": groups,
+                "disc1": [0.0]*len(groups),
+                "disc2": [0.0]*len(groups),
+                "disc3": [0.0]*len(groups),
             })
-
-            xano_edited_group_discounts = st.data_editor(
-                xano_group_discount_df,
-                column_config={
-                    'Groep': st.column_config.TextColumn('Groep', disabled=True, width="large"),
-                    'Korting 1 (%)': st.column_config.NumberColumn('Korting 1 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                    'Korting 2 (%)': st.column_config.NumberColumn('Korting 2 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                    'Korting 3 (%)': st.column_config.NumberColumn('Korting 3 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                },
+            edited = st.data_editor(
+                group_discount_df,
                 hide_index=True,
                 use_container_width=True,
-                num_rows="fixed",
-                key="xano_group_discount_editor"
+                key="xano_export_group_editor"
             )
+            for _, r in edited.iterrows():
+                group_map[str(r["Groep"])] = (float(r["disc1"]), float(r["disc2"]), float(r["disc3"]))
 
-            for _, r in xano_edited_group_discounts.iterrows():
-                xano_group_discounts[str(r['Groep'])] = {
-                    'disc1': float(r['Korting 1 (%)']),
-                    'disc2': float(r['Korting 2 (%)']),
-                    'disc3': float(r['Korting 3 (%)'])
-                }
-        else:
-            st.warning("⚠️ Geen groepen gevonden (of te veel). Kies een andere optie.")
-            xano_discount_mode = "❌ Geen kortingen"
-
-    elif xano_discount_mode == "📋 Uit kolommen in bestand":
-        st.write("**Selecteer kolommen met kortingspercentages:**")
+    elif disc_mode == "📋 Uit kolommen in bestand":
+        options = ['(geen)'] + final_result.columns.tolist()
         d1, d2, d3 = st.columns(3)
         with d1:
-            xano_disc1_col = st.selectbox("Korting 1 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc1_col")
-            if xano_disc1_col == '(geen)':
-                xano_disc1_col = None
+            disc1_col = st.selectbox("disc1 kolom", options=options, index=0, key="xano_export_disc1_col")
+            if disc1_col == '(geen)': disc1_col = None
         with d2:
-            xano_disc2_col = st.selectbox("Korting 2 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc2_col")
-            if xano_disc2_col == '(geen)':
-                xano_disc2_col = None
+            disc2_col = st.selectbox("disc2 kolom", options=options, index=0, key="xano_export_disc2_col")
+            if disc2_col == '(geen)': disc2_col = None
         with d3:
-            xano_disc3_col = st.selectbox("Korting 3 kolom:", options=['(geen)'] + final_result.columns.tolist(), index=0, key="xano_disc3_col")
-            if xano_disc3_col == '(geen)':
-                xano_disc3_col = None
+            disc3_col = st.selectbox("disc3 kolom", options=options, index=0, key="xano_export_disc3_col")
+            if disc3_col == '(geen)': disc3_col = None
 
-    # ============================================
-    # 6.5 BEREKEN FINALE DATA
-    # ============================================
-    def get_xano_discount_values(row):
-        if xano_discount_mode == "❌ Geen kortingen":
-            return 0.0, 0.0, 0.0
-        if xano_discount_mode == "📊 Vaste waarde voor alle artikelen":
-            return float(xano_fixed_disc1), float(xano_fixed_disc2), float(xano_fixed_disc3)
-        if xano_discount_mode == "📁 Per familie/artikelgroep":
-            group = str(row.get(xano_discount_group_col, ''))
-            vals = xano_group_discounts.get(group, {'disc1': 0.0, 'disc2': 0.0, 'disc3': 0.0})
-            return float(vals['disc1']), float(vals['disc2']), float(vals['disc3'])
-        if xano_discount_mode == "📋 Uit kolommen in bestand":
-            def to_pct(v):
-                if pd.isna(v) or str(v).strip() == '':
-                    return 0.0
-                return float(str(v).replace(',', '.').replace('%', '').strip())
-            disc1 = to_pct(row.get(xano_disc1_col)) if xano_disc1_col else 0.0
-            disc2 = to_pct(row.get(xano_disc2_col)) if xano_disc2_col else 0.0
-            disc3 = to_pct(row.get(xano_disc3_col)) if xano_disc3_col else 0.0
-            return float(disc1), float(disc2), float(disc3)
-        return 0.0, 0.0, 0.0
-
-    def parse_xano_price(value):
-        if pd.isna(value) or value is None:
+    def parse_pct(v):
+        if pd.isna(v) or str(v).strip() == '':
             return None
         try:
-            return round(float(str(value).replace(',', '.').replace('€', '').replace(' ', '').strip()), 2)
+            return float(str(v).replace(',', '.').replace('%', '').strip())
         except:
             return None
 
-    xano_push_df['_price'] = xano_push_df[xano_price_col].apply(parse_xano_price)
+    def parse_price_dot(v):
+        if pd.isna(v) or str(v).strip() == '':
+            return None
+        try:
+            return float(str(v).replace('€', '').replace(' ', '').replace(',', '.').strip())
+        except:
+            return None
 
-    disc_data = xano_push_df.apply(get_xano_discount_values, axis=1)
-    xano_push_df['_disc1'] = [d[0] for d in disc_data]
-    xano_push_df['_disc2'] = [d[1] for d in disc_data]
-    xano_push_df['_disc3'] = [d[2] for d in disc_data]
+    export_df["_xano_price"] = export_df[xano_price_col].apply(parse_price_dot)
+    export_df = export_df[export_df["_xano_price"].notna()].copy()
 
-    xano_push_df = xano_push_df[xano_push_df['_price'].notna()].copy()
-    if len(xano_push_df) == 0:
-        st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
-        st.stop()
+    # discounts
+    if disc_mode == "❌ Geen kortingen (leeg laten)":
+        export_df["_disc1"] = None
+        export_df["_disc2"] = None
+        export_df["_disc3"] = None
+    elif disc_mode == "📊 Vaste waarde voor alle artikelen":
+        export_df["_disc1"] = fixed1
+        export_df["_disc2"] = fixed2
+        export_df["_disc3"] = fixed3
+    elif disc_mode == "📁 Per familie/artikelgroep":
+        def grp(row):
+            key = str(row.get(group_col, ""))
+            return group_map.get(key, (None, None, None))
+        vals = export_df.apply(grp, axis=1)
+        export_df["_disc1"] = [v[0] for v in vals]
+        export_df["_disc2"] = [v[1] for v in vals]
+        export_df["_disc3"] = [v[2] for v in vals]
+    else:  # kolommen
+        export_df["_disc1"] = export_df[disc1_col].apply(parse_pct) if disc1_col else None
+        export_df["_disc2"] = export_df[disc2_col].apply(parse_pct) if disc2_col else None
+        export_df["_disc3"] = export_df[disc3_col].apply(parse_pct) if disc3_col else None
 
-    # ============================================
-    # 6.6 PREVIEW
-    # ============================================
-    st.subheader("👁️ Preview")
+    # ----------------------------
+    # 6.5 Bouw exportformaat
+    # ----------------------------
+    out = pd.DataFrame()
+    out["id"] = export_df[xano_id_col].astype(str).str.replace(".0", "", regex=False)
+    out["price"] = export_df["_xano_price"]
+    out["pricelist_name"] = xano_pricelist_name
+    out["pricelist_date"] = export_date_str
+    out["pricelist_quantity"] = int(xano_pricelist_quantity)
+    out["pricelist_price"] = export_df["_xano_price"]
 
-    preview_cols = [xano_id_col] + [c for c in xano_extra_preview_cols if c in xano_push_df.columns]
-    preview_cols += ['_price']
-    if xano_discount_mode != "❌ Geen kortingen":
-        preview_cols += ['_disc1', '_disc2', '_disc3']
-    preview_cols += [status_col]
+    # Optioneel: discs alleen toevoegen als niet alles leeg is
+    if not (export_df["_disc1"].isna().all() and export_df["_disc2"].isna().all() and export_df["_disc3"].isna().all()):
+        out["pricelist_disc1"] = export_df["_disc1"]
+        out["pricelist_disc2"] = export_df["_disc2"]
+        out["pricelist_disc3"] = export_df["_disc3"]
 
-    preview_df = xano_push_df[preview_cols].copy().rename(columns={
-        '_price': 'Prijs',
-        '_disc1': 'Korting 1 (%)',
-        '_disc2': 'Korting 2 (%)',
-        '_disc3': 'Korting 3 (%)'
-    })
+    st.subheader("👀 Preview export")
+    st.dataframe(out.head(50), use_container_width=True, hide_index=True)
 
-    st.dataframe(
-        preview_df.head(50),
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            'Prijs': st.column_config.NumberColumn(format="€ %.2f"),
-            'Korting 1 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-            'Korting 2 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-            'Korting 3 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-        }
-    )
+    st.subheader("📥 Download")
+    c1, c2 = st.columns(2)
 
-    if len(xano_push_df) > 50:
-        st.caption(f"... en {len(xano_push_df) - 50} meer artikelen")
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Artikelen", len(xano_push_df))
-    m2.metric("Gem. prijs", f"€{xano_push_df['_price'].mean():.2f}")
-    m3.metric("Totale waarde", f"€{xano_push_df['_price'].sum():,.2f}")
-    if xano_discount_mode != "❌ Geen kortingen":
-        m4.metric("Gem. korting 1", f"{xano_push_df['_disc1'].mean():.1f}%")
-
-    # ============================================
-    # 6.7 PUSH NAAR XANO (PUBLIC)
-    # ============================================
-    st.divider()
-
-    XANO_BASE = "https://xugs-gkkp-x831.g7.xano.io/api:wvc8yP8V"
-    BATCH_SIZE = 200
-
-    st.write("**Update samenvatting:**")
-    st.json({
-        "pricelist_name": xano_pricelist_name,
-        "pricelist_date": format_date_for_xano(xano_pricelist_date),
-        "pricelist_quantity": int(xano_pricelist_quantity),
-        "Aantal artikelen": len(xano_push_df)
-    })
-
-    # ============================================
-    # 6.7A ENDPOINT TEST (GET + PATCH) - PUBLIC
-    # ============================================
-    st.subheader("🧪 Xano endpoint test (GET + PATCH)")
-
-    default_test_id = ""
-    try:
-        default_test_id = str(xano_push_df[xano_id_col].iloc[0]).strip().replace(".0", "")
-    except:
-        pass
-
-    test_id = st.text_input("Test Xano ID:", value=default_test_id, key="xano_test_id")
-    tc1, tc2, tc3 = st.columns([2, 2, 3])
-
-    with tc1:
-        do_test_get = st.button("Test GET", key="xano_btn_test_get", use_container_width=True)
-    with tc2:
-        do_test_patch = st.button("Test PATCH (1 record)", key="xano_btn_test_patch", use_container_width=True)
-    with tc3:
-        test_price = st.number_input("Test prijs (PATCH):", min_value=0.0, value=1.23, step=0.01, key="xano_test_price")
-
-    if do_test_get or do_test_patch:
-        import requests
-
-        if not test_id or str(test_id).strip() == "":
-            st.error("Geen test ID ingevuld.")
-        else:
-            url = f"{XANO_BASE.rstrip('/')}/article/{str(test_id).strip()}"
-            headers = {"Content-Type": "application/json"}  # PUBLIC
-
-            st.caption(f"URL: {url}")
-            st.caption("Headers: Content-Type=application/json (public endpoint)")
-
-            if do_test_get:
-                try:
-                    r = requests.get(url, headers=headers, timeout=30)
-                    st.write("Status:", r.status_code)
-                    st.code(r.text[:2000] if r.text else "(geen body)")
-                except Exception as e:
-                    st.error(f"GET fout: {e}")
-
-            if do_test_patch:
-                payload = {
-                    "price": float(test_price),
-                    "pricelist_name": xano_pricelist_name,
-                    "pricelist_date": format_date_for_xano(xano_pricelist_date),
-                    "pricelist_quantity": int(xano_pricelist_quantity),
-                    "pricelist_price": float(test_price),
-                    "pricelist_disc1": 0.0,
-                    "pricelist_disc2": 0.0,
-                    "pricelist_disc3": 0.0
-                }
-
-                with st.expander("Payload (PATCH)"):
-                    st.json(payload)
-
-                try:
-                    r = requests.patch(url, json=payload, headers=headers, timeout=30)
-                    st.write("Status:", r.status_code)
-                    st.code(r.text[:2000] if r.text else "(geen body - mogelijk 204)")
-                except Exception as e:
-                    st.error(f"PATCH fout: {e}")
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        xano_push_button = st.button(
-            f"🛒 Update {len(xano_push_df)} artikelen in webshop",
-            type="primary",
-            use_container_width=True,
-            key="xano_push_to_webshop"
-        )
-
-    with col2:
-        xano_dry_run = st.checkbox("🧪 Test mode", value=True, key="xano_dry_run", help="Simuleert push zonder echte API calls")
-
-    if xano_push_button:
-        import requests
-        import time
-
-        results = []
-        success_count = 0
-        error_count = 0
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        formatted_date = format_date_for_xano(xano_pricelist_date)
-        total_items = len(xano_push_df)
-
-        for idx, (_, row) in enumerate(xano_push_df.iterrows()):
-            article_id = str(row[xano_id_col]).strip()
-            if article_id.endswith('.0'):
-                article_id = article_id[:-2]
-
-            price = float(row['_price'])
-            disc1 = float(row['_disc1'])
-            disc2 = float(row['_disc2'])
-            disc3 = float(row['_disc3'])
-
-            progress_bar.progress((idx + 1) / total_items)
-            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel ID {article_id}")
-
-            payload = {
-                "price": price,
-                "pricelist_name": xano_pricelist_name,
-                "pricelist_date": formatted_date,
-                "pricelist_quantity": int(xano_pricelist_quantity),
-                "pricelist_price": price,
-                "pricelist_disc1": disc1,
-                "pricelist_disc2": disc2,
-                "pricelist_disc3": disc3
-            }
-
-            if xano_dry_run:
-                results.append({"id": article_id, "price": price, "status": "✅ Succes (test mode)", "error": None})
-                success_count += 1
-                time.sleep(0.01)
-                continue
-
-            try:
-                url = f"{XANO_BASE.rstrip('/')}/article/{article_id}"
-                headers = {"Content-Type": "application/json"}  # PUBLIC
-
-                r = requests.patch(url, json=payload, headers=headers, timeout=30)
-
-                if r.status_code in [200, 204]:
-                    results.append({"id": article_id, "price": price, "status": "✅ Succes", "error": None})
-                    success_count += 1
-                else:
-                    msg = f"HTTP {r.status_code}"
-                    try:
-                        j = r.json()
-                        msg = j.get("message") or j.get("error") or j.get("code") or msg
-                    except:
-                        if r.text:
-                            msg = r.text[:300]
-                    results.append({"id": article_id, "price": price, "status": "❌ Mislukt", "error": msg})
-                    error_count += 1
-
-            except requests.exceptions.Timeout:
-                results.append({"id": article_id, "price": price, "status": "❌ Timeout", "error": "Request timeout na 30 seconden"})
-                error_count += 1
-            except requests.exceptions.RequestException as e:
-                results.append({"id": article_id, "price": price, "status": "❌ Fout", "error": str(e)})
-                error_count += 1
-
-            if (idx + 1) % BATCH_SIZE == 0:
-                time.sleep(0.5)
-
-        progress_bar.empty()
-        status_text.empty()
-
-        st.subheader("📊 Push Resultaten")
-
-        rc1, rc2, rc3 = st.columns(3)
-        rc1.metric("✅ Succesvol", success_count)
-        rc2.metric("❌ Mislukt", error_count)
-        rc3.metric("📊 Totaal", len(results))
-
-        results_df = pd.DataFrame(results)
-
-        st.session_state["xano_push_results"] = results_df
-        st.session_state["xano_push_df_for_retry"] = xano_push_df.copy()
-        st.session_state["xano_id_col_for_retry"] = xano_id_col
-        st.session_state["xano_pl_name_for_retry"] = xano_pricelist_name
-        st.session_state["xano_pl_date_for_retry"] = xano_pricelist_date
-        st.session_state["xano_pl_qty_for_retry"] = int(xano_pricelist_quantity)
-
-        if error_count > 0:
-            st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt.")
-            st.dataframe(results_df[results_df["status"].str.contains("❌")], use_container_width=True, hide_index=True)
-        else:
-            st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt in de webshop!")
-
-        with st.expander("📋 Bekijk alle resultaten"):
-            st.dataframe(results_df, use_container_width=True, hide_index=True)
-
+    with c1:
         st.download_button(
-            label="📥 Download resultaten (Excel)",
-            data=convert_to_excel(results_df),
-            file_name=f"xano_push_resultaten_{xano_pricelist_name}.xlsx",
+            "📥 Download Excel (Xano import)",
+            data=convert_to_excel(out),
+            file_name=f"xano_import_{xano_pricelist_name}_{xano_pricelist_date.strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="download_xano_results"
+            key="download_xano_import_excel"
         )
 
-    # ============================================
-    # 6.9 RETRY MISLUKTE ITEMS
-    # ============================================
-    if "xano_push_results" in st.session_state:
-        results_df = st.session_state["xano_push_results"]
-        failed = results_df[results_df["status"].str.contains("❌")]
-
-        if len(failed) > 0:
-            st.divider()
-            st.subheader("🔄 Opnieuw proberen")
-
-            st.write(f"**{len(failed)} artikelen** zijn niet bijgewerkt.")
-            with st.expander("👀 Bekijk mislukte items"):
-                st.dataframe(failed, use_container_width=True, hide_index=True)
-
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                retry_btn = st.button(f"🔄 Retry {len(failed)} mislukte items", type="secondary", use_container_width=True, key="xano_retry_failed")
-            with c2:
-                retry_dry = st.checkbox("🧪 Test mode", value=True, key="xano_retry_dry_run")
-
-            if retry_btn:
-                import requests
-                import time
-
-                retry_push_df = st.session_state["xano_push_df_for_retry"]
-                retry_id_col = st.session_state["xano_id_col_for_retry"]
-                retry_name = st.session_state["xano_pl_name_for_retry"]
-                retry_date = st.session_state["xano_pl_date_for_retry"]
-                retry_qty = st.session_state["xano_pl_qty_for_retry"]
-
-                failed_ids = failed["id"].astype(str).tolist()
-                retry_df = retry_push_df[retry_push_df[retry_id_col].astype(str).str.replace(".0", "", regex=False).isin(failed_ids)].copy()
-
-                retry_results = []
-                rs = re = 0
-
-                p = st.progress(0)
-                t = st.empty()
-
-                retry_formatted_date = format_date_for_xano(retry_date)
-
-                for i, (_, row) in enumerate(retry_df.iterrows()):
-                    aid = str(row[retry_id_col]).strip()
-                    if aid.endswith(".0"):
-                        aid = aid[:-2]
-
-                    price = float(row["_price"])
-                    disc1 = float(row["_disc1"])
-                    disc2 = float(row["_disc2"])
-                    disc3 = float(row["_disc3"])
-
-                    p.progress((i + 1) / len(retry_df))
-                    t.text(f"🔄 Retry: {i + 1}/{len(retry_df)} - Artikel ID {aid}")
-
-                    payload = {
-                        "price": price,
-                        "pricelist_name": retry_name,
-                        "pricelist_date": retry_formatted_date,
-                        "pricelist_quantity": int(retry_qty),
-                        "pricelist_price": price,
-                        "pricelist_disc1": disc1,
-                        "pricelist_disc2": disc2,
-                        "pricelist_disc3": disc3
-                    }
-
-                    if retry_dry:
-                        retry_results.append({"id": aid, "price": price, "status": "✅ Succes (test mode)", "error": None})
-                        rs += 1
-                        time.sleep(0.01)
-                        continue
-
-                    try:
-                        url = f"{XANO_BASE.rstrip('/')}/article/{aid}"
-                        headers = {"Content-Type": "application/json"}  # PUBLIC
-                        r = requests.patch(url, json=payload, headers=headers, timeout=30)
-
-                        if r.status_code in [200, 204]:
-                            retry_results.append({"id": aid, "price": price, "status": "✅ Succes", "error": None})
-                            rs += 1
-                        else:
-                            msg = f"HTTP {r.status_code}"
-                            try:
-                                j = r.json()
-                                msg = j.get("message") or j.get("error") or j.get("code") or msg
-                            except:
-                                if r.text:
-                                    msg = r.text[:300]
-                            retry_results.append({"id": aid, "price": price, "status": "❌ Mislukt", "error": msg})
-                            re += 1
-                    except Exception as e:
-                        retry_results.append({"id": aid, "price": price, "status": "❌ Fout", "error": str(e)})
-                        re += 1
-
-                    time.sleep(0.1)
-
-                p.empty()
-                t.empty()
-
-                st.subheader("📊 Retry Resultaten")
-                cc1, cc2 = st.columns(2)
-                cc1.metric("✅ Nu succesvol", rs)
-                cc2.metric("❌ Nog steeds mislukt", re)
-
-                retry_df_res = pd.DataFrame(retry_results)
-                original_success = results_df[~results_df["status"].str.contains("❌")]
-                st.session_state["xano_push_results"] = pd.concat([original_success, retry_df_res], ignore_index=True)
-
-                st.download_button(
-                    label="📥 Download retry resultaten (Excel)",
-                    data=convert_to_excel(retry_df_res),
-                    file_name=f"xano_retry_resultaten_{retry_name}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_xano_retry_results"
-                )
-    # ============================================
+    with c2:
+        # CSV met punt-decimaal (we bouwen even expliciet)
+        csv_bytes = out.to_csv(index=False, sep=",", decimal=".", encoding="utf-8").encode("utf-8")
+        st.download_button(
+            "📥 Download CSV (Xano import)",
+            data=csv_bytes,
+            file_name=f"xano_import_{xano_pricelist_name}_{xano_pricelist_date.strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            key="download_xano_import_csv"
+        )
+        # ============================================
