@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from io import BytesIO
 
 # ============================================
@@ -197,7 +198,8 @@ def convert_to_excel(df):
         
         # Kolombreedte aanpassen
         for i, col in enumerate(df.columns):
-            max_length = max(df[col].astype(str).map(len).max(), len(col)) + 2
+            sample = df[col].astype(str).head(2000)
+            max_length = max(sample.map(len).max(), len(col)) + 2
             worksheet.set_column(i, i, min(max_length, 30))
     
     return output.getvalue()
@@ -235,7 +237,7 @@ with col2:
         key="supplier_file"
     )
     supplier_df = load_file(supplier_file)
-    
+
     if supplier_df is not None:
         st.success(f"✅ {len(supplier_df)} rijen geladen")
         with st.expander("🔍 Bekijk data"):
@@ -405,20 +407,15 @@ if own_df is not None and supplier_df is not None:
             
             result['Verschil €'] = result['_supplier_price'] - result['_own_price']
             result['Verschil %'] = ((result['_supplier_price'] - result['_own_price']) / result['_own_price'] * 100).round(2)
-            
-            def categorize(row):
-                if pd.isna(row['_supplier_price']):
-                    return '⚠️ Niet gevonden'
-                elif pd.isna(row['Verschil €']):
-                    return '⚠️ Niet gevonden'
-                elif row['Verschil €'] > 0.01:
-                    return '🔴 Prijsverhoging'
-                elif row['Verschil €'] < -0.01:
-                    return '🟢 Prijsverlaging'
-                else:
-                    return '⚪ Ongewijzigd'
-            
-            result['Status'] = result.apply(categorize, axis=1)
+            cond_not_found = result['_supplier_price'].isna()
+            cond_up = result['Verschil €'] > 0.01
+            cond_down = result['Verschil €'] < -0.01
+
+            result['Status'] = np.select(
+                [cond_not_found, cond_up, cond_down],
+                ['⚠️ Niet gevonden', '🔴 Prijsverhoging', '🟢 Prijsverlaging'],
+                default='⚪ Ongewijzigd'
+            )
             
             # ============================================
             # OUTPUT VOORBEREIDEN
@@ -515,16 +512,19 @@ if own_df is not None and supplier_df is not None:
             supplier_not_found_export_cols = [supplier_article_col, supplier_price_col] + supplier_extra_cols
             supplier_not_found_export = supplier_not_found[supplier_not_found_export_cols].copy()
             supplier_not_found_export = supplier_not_found_export.reset_index(drop=True)
-            st.session_state['supplier_not_found'] = supplier_not_found_export
-            
-            # Artikelen bij ons die NIET bij leverancier voorkomen
             own_not_found = result[result['_supplier_price'].isna()].copy()
             own_not_found_export_cols = [own_article_col] + own_extra_cols + [own_price_col]
-            # Filter alleen bestaande kolommen (voor het geval van mismatch)
             own_not_found_export_cols = [c for c in own_not_found_export_cols if c in own_not_found.columns]
             own_not_found_export = own_not_found[own_not_found_export_cols].copy()
             own_not_found_export = own_not_found_export.reset_index(drop=True)
-            st.session_state['own_not_found'] = own_not_found_export
+            MAX_STORE_ROWS = 50000
+            if len(final_result) <= MAX_STORE_ROWS:
+                st.session_state['supplier_not_found'] = supplier_not_found_export
+                st.session_state['own_not_found'] = own_not_found_export
+            else:
+                st.session_state['supplier_not_found'] = None
+                st.session_state['own_not_found'] = None
+                st.warning("⚠️ Grote dataset: 'niet-gematchte artikelen' lijsten worden niet in geheugen bewaard om memory te sparen. Gebruik vooral exports van het hoofdresultaat.")
 
 # ============================================
 # RESULTATEN TONEN
@@ -616,8 +616,10 @@ if 'final_result' in st.session_state:
             col_config[col] = st.column_config.TextColumn(col)
     
     # Toon dataframe ZONDER index
+    MAX_PREVIEW_ROWS = 2000
+    st.caption(f"Toont eerste {min(MAX_PREVIEW_ROWS, len(display_df))} rijen (performance).")
     st.dataframe(
-        display_df,
+        display_df.head(MAX_PREVIEW_ROWS),
         use_container_width=True,
         height=400,
         column_config=col_config,
@@ -667,19 +669,16 @@ if 'final_result' in st.session_state:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Onze artikelen niet gevonden bij leverancier
-        if 'own_not_found' in st.session_state:
-            own_not_found = st.session_state['own_not_found']
+        own_not_found = st.session_state.get('own_not_found')
+        if own_not_found is None:
+            st.info("Niet-gematchte lijst niet beschikbaar (dataset te groot).")
+        else:
             st.metric("Onze artikelen niet bij leverancier", len(own_not_found))
-            
+
             if len(own_not_found) > 0:
                 with st.expander("👀 Bekijk lijst"):
-                    st.dataframe(
-                        own_not_found.head(20), 
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                
+                    st.dataframe(own_not_found.head(20), use_container_width=True, hide_index=True)
+
                 st.download_button(
                     label="📥 Export: Onze artikelen NIET bij leverancier",
                     data=convert_to_excel(own_not_found),
@@ -689,26 +688,28 @@ if 'final_result' in st.session_state:
                 )
     
     with col2:
-        # Leverancier artikelen niet gevonden bij ons
-        if 'supplier_not_found' in st.session_state:
-            supplier_not_found = st.session_state['supplier_not_found']
-            st.metric("Leverancier artikelen niet bij ons", len(supplier_not_found))
-            
-            if len(supplier_not_found) > 0:
-                with st.expander("👀 Bekijk lijst"):
-                    st.dataframe(
-                        supplier_not_found.head(20), 
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                
-                st.download_button(
-                    label="📥 Export: Leverancier artikelen NIET bij ons",
-                    data=convert_to_excel(supplier_not_found),
-                    file_name="leverancier_artikelen_niet_bij_ons.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_supplier_not_found"
+        supplier_not_found = st.session_state.get('supplier_not_found')
+
+    if supplier_not_found is None:
+        st.info("Niet-gematchte lijst niet beschikbaar (dataset te groot).")
+    else:
+        st.metric("Leverancier artikelen niet bij ons", len(supplier_not_found))
+
+        if len(supplier_not_found) > 0:
+            with st.expander("👀 Bekijk lijst"):
+                st.dataframe(
+                    supplier_not_found.head(20),
+                    use_container_width=True,
+                    hide_index=True
                 )
+
+            st.download_button(
+                label="📥 Export: Leverancier artikelen NIET bij ons",
+                data=convert_to_excel(supplier_not_found),
+                file_name="leverancier_artikelen_niet_bij_ons.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_supplier_not_found"
+            )
 
     # ============================================
     # STAP 4: PUSH NAAR PRIORITY
@@ -1200,8 +1201,9 @@ if 'final_result' in st.session_state:
                 use_container_width=True,
                 hide_index=True
             )
-        
-        # Download resultaten
+        if len(final_result) > 50000:
+            st.warning("⚠️ Grote dataset: Excel export kan traag zijn of memory issues geven. Gebruik bij voorkeur CSV.")
+
         st.download_button(
             label="📥 Download resultaten (Excel)",
             data=convert_to_excel(results_df),
@@ -1364,6 +1366,9 @@ if 'final_result' in st.session_state:
                     st.success("🎉 Alle retry items succesvol bijgewerkt!")
                 
                 # Download retry resultaten
+                if len(final_result) > 50000:
+                    st.warning("⚠️ Grote dataset: Excel export kan traag zijn of memory issues geven. Gebruik bij voorkeur CSV.")
+
                 st.download_button(
                     label="📥 Download retry resultaten (Excel)",
                     data=convert_to_excel(retry_results_df),
@@ -2501,11 +2506,11 @@ if 'final_result' in st.session_state:
     # ----------------------------
     out = pd.DataFrame()
     out["id"] = export_df[xano_id_col].astype(str).str.replace(".0", "", regex=False)
-    out["price"] = export_df["_xano_price"]
+    out["price"] = pd.to_numeric(export_df["_xano_price"], errors="coerce").round(2)
     out["pricelist_name"] = xano_pricelist_name
     out["pricelist_date"] = export_date_str
     out["pricelist_quantity"] = int(xano_pricelist_quantity)
-    out["pricelist_price"] = export_df["_xano_price"]
+    out["pricelist_price"] = pd.to_numeric(export_df["_xano_price"], errors="coerce").round(2)
 
     # Optioneel: discs alleen toevoegen als niet alles leeg is
     if not (export_df["_disc1"].isna().all() and export_df["_disc2"].isna().all() and export_df["_disc3"].isna().all()):
