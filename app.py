@@ -721,27 +721,28 @@ if 'final_result' in st.session_state:
     # ============================================
     st.divider()
     st.header("🚀 Stap 4: Push naar Priority ERP")
-    
-    # Check of er data is om te pushen
+
     if 'final_result' not in st.session_state:
         st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
         st.stop()
-    
+
     final_result = st.session_state['final_result']
     status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
-    
+
     # ============================================
     # 4.1 KOLOM MAPPING
     # ============================================
     st.subheader("📋 Kolom Mapping")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        # Artikelnummer kolom selectie (voor PARTNAME in Priority)
-        partname_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['article', 'artikel', 'partname', 'part_name', 'artikelnummer', 'article_code', 'code'])]
+        partname_candidates = [
+            c for c in final_result.columns
+            if any(x in c.lower() for x in ['partname', 'artikelnummer', 'article_code', 'article', 'artikel', 'code'])
+        ]
         default_partname = partname_candidates[0] if partname_candidates else final_result.columns[0]
-        
+
         partname_col = st.selectbox(
             "Kolom met artikelnummer (→ PARTNAME):",
             options=final_result.columns.tolist(),
@@ -749,12 +750,11 @@ if 'final_result' in st.session_state:
             key="partname_col",
             help="Deze kolom moet overeenkomen met PARTNAME in LOGPART"
         )
-    
+
     with col2:
-        # Nieuwe prijs kolom selectie
         price_candidates = [c for c in final_result.columns if 'prijs' in c.lower() or 'price' in c.lower()]
         default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
-        
+
         new_price_col = st.selectbox(
             "Kolom met nieuwe prijs (→ BASEPLPRICE):",
             options=final_result.columns.tolist(),
@@ -762,14 +762,24 @@ if 'final_result' in st.session_state:
             key="new_price_col",
             help="Deze waarde wordt naar BASEPLPRICE gestuurd"
         )
-    
+
+    # Priority ID (moet gevuld zijn om te patchen)
+    priority_id_candidates = [c for c in final_result.columns if c.lower() == "priority_id" or "priority" in c.lower()]
+    default_priority_id = "priority_id" if "priority_id" in final_result.columns else (priority_id_candidates[0] if priority_id_candidates else final_result.columns[0])
+
+    priority_id_col = st.selectbox(
+        "Kolom met Priority ID (verplicht om te patchen):",
+        options=final_result.columns.tolist(),
+        index=final_result.columns.tolist().index(default_priority_id) if default_priority_id in final_result.columns else 0,
+        key="priority_id_col_push",
+        help="Alleen rijen met een ingevulde Priority ID worden naar Priority gestuurd."
+    )
+
     # Extra kolommen voor preview
-    available_preview_cols = [c for c in final_result.columns if c not in [partname_col, new_price_col, status_col]]
-    
-    # Suggesties voor extra kolommen (artikelnaam, code, etc.)
-    suggested_cols = [c for c in available_preview_cols if any(x in c.lower() for x in ['name', 'naam', 'article', 'artikel', 'supplier', 'leverancier', 'omschrijving', 'description', 'huidige', 'current'])]
+    available_preview_cols = [c for c in final_result.columns if c not in [partname_col, new_price_col, priority_id_col, status_col]]
+    suggested_cols = [c for c in available_preview_cols if any(x in c.lower() for x in ['name', 'naam', 'supplier', 'leverancier', 'omschrijving', 'description', 'huidige', 'current'])]
     default_extra_cols = suggested_cols[:3] if suggested_cols else available_preview_cols[:3]
-    
+
     extra_preview_cols = st.multiselect(
         "Extra kolommen tonen in preview (optioneel):",
         options=available_preview_cols,
@@ -777,22 +787,20 @@ if 'final_result' in st.session_state:
         key="extra_preview_cols",
         help="Selecteer extra kolommen om te tonen in de preview tabel"
     )
-    
+
     # ============================================
     # 4.2 FILTER SELECTIE
     # ============================================
     st.subheader("📊 Welke artikelen pushen?")
-    
+
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="include_increases")
     with col2:
         include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="include_decreases")
     with col3:
         include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="include_unchanged")
-    
-    # Filter data op basis van selectie
+
     selected_statuses = []
     if include_increases:
         selected_statuses.append('🔴 Prijsverhoging')
@@ -800,48 +808,48 @@ if 'final_result' in st.session_state:
         selected_statuses.append('🟢 Prijsverlaging')
     if include_unchanged:
         selected_statuses.append('⚪ Ongewijzigd')
-    
+
     if not selected_statuses:
         st.warning("⚠️ Selecteer minimaal één categorie om te pushen.")
         st.stop()
-    
-    # Filter op status EN artikelnummer moet gevuld zijn
+
+    # Filter: status + partname aanwezig + priority_id aanwezig
     push_df = final_result[
         (final_result[status_col].isin(selected_statuses)) &
         (final_result[partname_col].notna()) &
         (final_result[partname_col].astype(str).str.strip() != '') &
-        (final_result[partname_col].astype(str).str.lower() != 'nan')
+        (final_result[partname_col].astype(str).str.lower() != 'nan') &
+        (final_result[priority_id_col].notna()) &
+        (final_result[priority_id_col].astype(str).str.strip() != '') &
+        (final_result[priority_id_col].astype(str).str.lower() != 'nan')
     ].copy()
-    
-    st.info(f"📋 {len(push_df)} artikelen geselecteerd met geldig artikelnummer")
-    
+
+    st.info(f"📋 {len(push_df)} artikelen geselecteerd met geldig artikelnummer én Priority ID")
+
     if len(push_df) == 0:
-        st.warning("⚠️ Geen artikelen gevonden met geldig artikelnummer in de geselecteerde categorieën.")
+        st.warning("⚠️ Geen artikelen gevonden met geldige Priority ID in de geselecteerde categorieën.")
         st.stop()
-    
+
     # ============================================
     # 4.3 MARK-UP OPTIES
     # ============================================
     st.subheader("💰 Prijsaanpassing (Mark-up)")
-    
+
     markup_type = st.radio(
         "Mark-up type:",
         options=["Geen mark-up", "Percentage (%)", "Vast bedrag (€)"],
         horizontal=True,
         key="markup_type"
     )
-    
-    # Initialiseer variabelen
+
     markup_value = 0
     markup_scope = "Alle artikelen"
     group_markups = {}
     group_col = None
     selected_for_markup = []
-    
-    # Mark-up waarde en scope
+
     if markup_type != "Geen mark-up":
         col1, col2 = st.columns(2)
-        
         with col1:
             if markup_type == "Percentage (%)":
                 markup_value = st.number_input(
@@ -851,7 +859,6 @@ if 'final_result' in st.session_state:
                     value=5.0,
                     step=0.5,
                     key="markup_pct",
-                    help="Bv. 5 voor 5% verhoging"
                 )
             else:
                 markup_value = st.number_input(
@@ -860,35 +867,27 @@ if 'final_result' in st.session_state:
                     value=10.0,
                     step=1.0,
                     key="markup_fixed",
-                    help="Vast bedrag dat wordt opgeteld"
                 )
-        
+
         with col2:
             markup_scope = st.radio(
                 "Toepassen op:",
                 options=["Alle artikelen", "Per artikelgroep", "Handmatig selecteren"],
                 key="markup_scope"
             )
-        
-        # Per artikelgroep configuratie
+
         if markup_scope == "Per artikelgroep":
-            # Selecteer groepkolom
             group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie'])]
-            
             group_col = st.selectbox(
                 "Groepeer op kolom:",
                 options=final_result.columns.tolist(),
                 index=final_result.columns.tolist().index(group_col_candidates[0]) if group_col_candidates else 0,
                 key="group_col"
             )
-            
-            # Toon unieke groepen met mark-up input
+
             unique_groups = push_df[group_col].dropna().unique()
-            
             if len(unique_groups) > 0 and len(unique_groups) <= 50:
                 st.write("**Mark-up per groep:**")
-                
-                # Maak 3 kolommen voor compactere weergave
                 cols = st.columns(3)
                 for idx, group in enumerate(sorted(unique_groups)):
                     with cols[idx % 3]:
@@ -900,7 +899,6 @@ if 'final_result' in st.session_state:
                                 value=float(markup_value),
                                 step=0.5,
                                 key=f"group_markup_{idx}",
-                                label_visibility="visible"
                             )
                         else:
                             group_markups[group] = st.number_input(
@@ -909,146 +907,100 @@ if 'final_result' in st.session_state:
                                 value=float(markup_value),
                                 step=1.0,
                                 key=f"group_markup_{idx}",
-                                label_visibility="visible"
                             )
             elif len(unique_groups) > 50:
                 st.warning(f"⚠️ Te veel groepen ({len(unique_groups)}). Gebruik 'Alle artikelen' of 'Handmatig selecteren'.")
                 markup_scope = "Alle artikelen"
-        
-        # Handmatige selectie
+
         if markup_scope == "Handmatig selecteren":
             st.write("**Selecteer artikelen voor mark-up:**")
-            
-            # Voeg selectie kolom toe
-            markup_selection_df = push_df[[partname_col, new_price_col, status_col]].copy()
-            markup_selection_df['_apply_markup'] = False
-            
+            selection_df = push_df[[partname_col, new_price_col, status_col]].copy()
+            selection_df['_apply_markup'] = False
+
             edited_df = st.data_editor(
-                markup_selection_df.head(100),
+                selection_df.head(100),
                 column_config={
-                    "_apply_markup": st.column_config.CheckboxColumn(
-                        "Mark-up?",
-                        help="Vink aan om mark-up toe te passen",
-                        default=False
-                    )
+                    "_apply_markup": st.column_config.CheckboxColumn("Mark-up?", default=False)
                 },
                 disabled=[partname_col, new_price_col, status_col],
                 hide_index=True,
                 key="markup_selection"
             )
-            
-            # Update selecties
             selected_for_markup = edited_df[edited_df['_apply_markup'] == True][partname_col].tolist()
             st.info(f"✅ {len(selected_for_markup)} artikelen geselecteerd voor mark-up")
-    
+
     # ============================================
     # 4.4 BEREKEN FINALE PRIJZEN
     # ============================================
-    
     def calculate_final_price(row):
-        """Bereken finale prijs inclusief eventuele mark-up"""
         try:
-            price_val = str(row[new_price_col]).replace(',', '.').replace('€', '').replace(' ', '').strip()
-            base_price = float(price_val)
+            base_price = float(str(row[new_price_col]).replace(',', '.').replace('€', '').replace(' ', '').strip())
         except (ValueError, TypeError):
             return None
-        
+
         if markup_type == "Geen mark-up":
             return round(base_price, 2)
-        
-        # Bepaal mark-up voor dit artikel
+
         applied_markup = 0
         if markup_scope == "Alle artikelen":
             applied_markup = markup_value
         elif markup_scope == "Per artikelgroep" and group_col:
-            group = row.get(group_col, None)
-            applied_markup = group_markups.get(group, 0)
+            applied_markup = group_markups.get(row.get(group_col, None), 0)
         elif markup_scope == "Handmatig selecteren":
-            if row[partname_col] in selected_for_markup:
-                applied_markup = markup_value
-            else:
-                applied_markup = 0
-        
-        # Bereken finale prijs
+            applied_markup = markup_value if row[partname_col] in selected_for_markup else 0
+
         if markup_type == "Percentage (%)":
-            final_price = base_price * (1 + applied_markup / 100)
-        else:  # Vast bedrag
-            final_price = base_price + applied_markup
-        
-        return round(final_price, 2)
-    
-    # Bereken finale prijzen
+            return round(base_price * (1 + applied_markup / 100), 2)
+        else:
+            return round(base_price + applied_markup, 2)
+
     push_df['_final_price'] = push_df.apply(calculate_final_price, axis=1)
-    
-    # Verwijder rijen zonder geldige prijs
     push_df = push_df[push_df['_final_price'].notna()].copy()
-    
+
     if len(push_df) == 0:
         st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
         st.stop()
-    
+
     # ============================================
     # 4.5 PREVIEW
     # ============================================
     st.subheader("👁️ Preview")
-    
-    # Bouw preview kolommen op
-    preview_cols = [partname_col]
-    
-    # Voeg extra kolommen toe
+
+    preview_cols = [priority_id_col, partname_col]
     for col in extra_preview_cols:
         if col in push_df.columns and col not in preview_cols:
             preview_cols.append(col)
-    
-    # Voeg prijs kolommen toe
-    preview_cols.append(new_price_col)
-    if markup_type != "Geen mark-up":
-        preview_cols.append('_final_price')
-    preview_cols.append(status_col)
-    
-    # Maak preview DataFrame
-    preview_df = push_df[preview_cols].copy()
-    
-    # Hernoem _final_price voor duidelijkheid
-    if '_final_price' in preview_df.columns:
-        preview_df = preview_df.rename(columns={'_final_price': 'Finale prijs'})
-    
-    # Column config voor formatting
-    preview_col_config = {
-        'Finale prijs': st.column_config.NumberColumn(format="€ %.2f"),
-    }
-    if 'prijs' in new_price_col.lower() or 'price' in new_price_col.lower():
-        preview_col_config[new_price_col] = st.column_config.NumberColumn(format="€ %.2f")
-    
+    preview_cols += [new_price_col, '_final_price', status_col]
+
+    preview_df = push_df[preview_cols].copy().rename(columns={'_final_price': 'Finale prijs'})
+
     st.dataframe(
         preview_df.head(50),
         use_container_width=True,
         hide_index=True,
-        column_config=preview_col_config
+        column_config={
+            'Finale prijs': st.column_config.NumberColumn(format="€ %.2f")
+        }
     )
-    
+
     if len(push_df) > 50:
         st.caption(f"... en {len(push_df) - 50} meer artikelen")
-    
-    # Samenvatting
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Totaal te pushen", len(push_df))
     col2.metric("Gemiddelde finale prijs", f"€{push_df['_final_price'].mean():.2f}")
     col3.metric("Totale waarde", f"€{push_df['_final_price'].sum():,.2f}")
-    
+
     # ============================================
     # 4.6 PUSH NAAR PRIORITY
     # ============================================
     st.divider()
-    
-    # Priority API configuratie
+
     PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
     PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
     BATCH_SIZE = 200
-    
-    # Push knop
+
     col1, col2 = st.columns([3, 1])
-    
     with col1:
         push_button = st.button(
             f"🚀 Push {len(push_df)} artikelen naar Priority",
@@ -1056,111 +1008,14 @@ if 'final_result' in st.session_state:
             use_container_width=True,
             key="push_to_priority"
         )
-    
     with col2:
-        dry_run = st.checkbox("🧪 Test mode", value=True, help="Simuleert push zonder echte API calls")
-    
+        dry_run = st.checkbox("🧪 Test mode", value=True)
+
     if push_button:
         import requests
         import time
         import urllib.parse
-        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # Instellingen
-        BATCH_SIZE = 500
-        MAX_WORKERS = 8          # start met 8, verlaag bij errors/429
-        MAX_RETRIES = 3
-        REQUEST_TIMEOUT = 30
-
-        # Maak 1 herbruikbare session (sneller)
-        session = requests.Session()
-        session.headers.update({
-            "Authorization": PRIORITY_AUTH,
-            "Content-Type": "application/json"
-        })
-
-        def priority_patch_one(partname: str, final_price: float):
-            """
-            Patch 1 artikel in Priority.
-            Returns dict met status + error.
-            """
-            # URL encode PARTNAME
-            encoded_partname = urllib.parse.quote(str(partname).strip(), safe='')
-            url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
-            payload = {"BASEPLPRICE": float(final_price)}
-
-            last_error = None
-
-            for attempt in range(1, MAX_RETRIES + 1):
-                try:
-                    resp = session.patch(url, json=payload, timeout=REQUEST_TIMEOUT)
-
-                    # Succes
-                    if resp.status_code in (200, 204):
-                        return {
-                            "partname": partname,
-                            "new_price": float(final_price),
-                            "status": "✅ Succes",
-                            "http_status": resp.status_code,
-                            "error": None
-                        }
-
-                    # Retry conditions
-                    if resp.status_code in (429, 500, 502, 503, 504):
-                        # probeer error detail te lezen
-                        try:
-                            j = resp.json()
-                            last_error = j.get("error", {}).get("message") or j.get("message") or resp.text[:200]
-                        except:
-                            last_error = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-
-                        # Exponential backoff + jitter
-                        sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
-                        time.sleep(sleep_s)
-                        continue
-
-                    # Niet-retryable error
-                    try:
-                        j = resp.json()
-                        err = j.get("error", {}).get("message") or j.get("message") or resp.text[:200]
-                    except:
-                        err = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-
-                    return {
-                        "partname": partname,
-                        "new_price": float(final_price),
-                        "status": "❌ Mislukt",
-                        "http_status": resp.status_code,
-                        "error": err
-                    }
-
-                except requests.exceptions.Timeout:
-                    last_error = "Timeout"
-                    sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
-                    time.sleep(sleep_s)
-                    continue
-                except requests.exceptions.RequestException as e:
-                    last_error = str(e)
-                    sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
-                    time.sleep(sleep_s)
-                    continue
-
-            # Als alle retries gefaald hebben
-            return {
-                "partname": partname,
-                "new_price": float(final_price),
-                "status": "❌ Mislukt (retries)",
-                "http_status": None,
-                "error": last_error
-            }
-
-        # Data voorbereiden (lijst van tuples) - sneller dan iterrows in threads
-        items = list(zip(
-            push_df[partname_col].astype(str).tolist(),
-            push_df['_final_price'].astype(float).tolist()
-        ))
-
-        total_items = len(items)
         results = []
         success_count = 0
         error_count = 0
@@ -1168,74 +1023,67 @@ if 'final_result' in st.session_state:
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Helper om batches te maken
-        def chunks(lst, n):
-            for i in range(0, len(lst), n):
-                yield lst[i:i+n]
+        total_items = len(push_df)
 
-        processed = 0
+        for idx, (_, row) in enumerate(push_df.iterrows()):
+            partname = str(row[partname_col]).strip()
+            final_price = row['_final_price']
 
-        if dry_run:
-            # Simuleer (snel)
-            for partname, final_price in items:
-                results.append({
-                    "partname": partname,
-                    "new_price": float(final_price),
-                    "status": "✅ Succes (test mode)",
-                    "http_status": None,
-                    "error": None
-                })
-            success_count = len(results)
+            progress_bar.progress((idx + 1) / total_items)
+            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel {partname}")
 
-        else:
-            # Batch per 500 uitvoeren
-            for batch_idx, batch in enumerate(chunks(items, BATCH_SIZE), start=1):
-                batch_total = len(batch)
-                status_text.text(f"⏳ Batch {batch_idx} - {batch_total} artikelen (parallel: {MAX_WORKERS})")
+            if dry_run:
+                results.append({"partname": partname, "new_price": final_price, "status": "✅ Succes (test mode)", "error": None})
+                success_count += 1
+                time.sleep(0.01)
+                continue
 
-                # Parallel patchen
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                    future_map = {
-                        ex.submit(priority_patch_one, partname, price): (partname, price)
-                        for (partname, price) in batch
-                    }
+            try:
+                encoded_partname = urllib.parse.quote(partname, safe='')
+                url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
+                headers = {'Authorization': PRIORITY_AUTH, 'Content-Type': 'application/json'}
+                payload = {'BASEPLPRICE': final_price}
 
-                    for fut in as_completed(future_map):
-                        res = fut.result()
-                        results.append(res)
+                response = requests.patch(url, json=payload, headers=headers, timeout=30)
 
-                        processed += 1
-                        if res["status"].startswith("✅"):
-                            success_count += 1
-                        else:
-                            error_count += 1
+                if response.status_code in [200, 204]:
+                    results.append({"partname": partname, "new_price": final_price, "status": "✅ Succes", "error": None})
+                    success_count += 1
+                else:
+                    results.append({"partname": partname, "new_price": final_price, "status": "❌ Mislukt", "error": response.text[:200]})
+                    error_count += 1
 
-                        # Progress updaten
-                        progress_bar.progress(processed / total_items)
-
-                        # Af en toe status updaten (niet bij elke record, scheelt UI overhead)
-                        if processed % 50 == 0 or processed == total_items:
-                            status_text.text(
-                                f"⏳ Verwerkt {processed}/{total_items} | ✅ {success_count} | ❌ {error_count}"
-                            )
-
-                # Kleine rust tussen batches (helpt tegen throttling)
-                time.sleep(0.2)
+            except Exception as e:
+                results.append({"partname": partname, "new_price": final_price, "status": "❌ Fout", "error": str(e)})
+                error_count += 1
 
         progress_bar.empty()
         status_text.empty()
 
-        # Resultaten DataFrame
-        results_df = pd.DataFrame(results)
+        st.subheader("📊 Push Resultaten")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("✅ Succesvol", success_count)
+        c2.metric("❌ Mislukt", error_count)
+        c3.metric("📊 Totaal", len(results))
 
-        # Sla op voor retry
+        results_df = pd.DataFrame(results)
         st.session_state['push_results'] = results_df
         st.session_state['push_df_for_retry'] = push_df.copy()
         st.session_state['partname_col_for_retry'] = partname_col
-        
-        # Verwijder progress indicators
-        progress_bar.empty()
-        status_text.empty()
+
+        if error_count > 0:
+            st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt.")
+            st.dataframe(results_df[results_df['status'].str.contains('❌')], use_container_width=True, hide_index=True)
+        else:
+            st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt!")
+
+        st.download_button(
+            label="📥 Download resultaten (Excel)",
+            data=convert_to_excel(results_df),
+            file_name="priority_push_resultaten.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_push_results"
+        )
         
         # ============================================
         # 4.7 RESULTATEN TONEN
@@ -1455,26 +1303,32 @@ if 'final_result' in st.session_state:
                     key="download_retry_results"
                 )
     # ============================================
-    # STAP 5: PUSH LEVERANCIERSPRIJSLIJST NAAR PRIORITY
+    # STAP 5: PUSH LEVERANCIERSPRIJSLIJST NAAR PRIORITY (PATCH)
     # ============================================
     st.divider()
     st.header("📦 Stap 5: Leveranciersprijslijst naar Priority")
-    
-    # Check of er data is
+
     if 'final_result' not in st.session_state:
         st.warning("⚠️ Voer eerst een prijsvergelijking uit.")
         st.stop()
-    
+
     final_result = st.session_state['final_result']
     status_col = 'Prijsstatus' if 'Prijsstatus' in final_result.columns else 'Status'
-    
+
+    # --------------------------------------------
+    # HARD REQUIREMENT: priority_id moet bestaan
+    # --------------------------------------------
+    if 'priority_id' not in final_result.columns:
+        st.error("❌ Kolom 'priority_id' ontbreekt in het resultaat. Voeg deze kolom toe aan je 'eigen' upload (hoofdfile).")
+        st.stop()
+
     # ============================================
     # 5.1 PRIJSLIJST HEADER (SUPPRICELIST)
     # ============================================
     st.subheader("📋 Prijslijst gegevens (SUPPRICELIST)")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         suppl_name = st.text_input(
             "Prijslijstcode (SUPPLNAME):",
@@ -1483,7 +1337,7 @@ if 'final_result' in st.session_state:
             key="suppl_name",
             help="Max 8 karakters - Unieke code voor deze prijslijst"
         )
-        
+
         sup_name = st.text_input(
             "Leverancierscode (SUPNAME):",
             value="",
@@ -1491,7 +1345,7 @@ if 'final_result' in st.session_state:
             key="sup_name",
             help="Max 16 karakters - Code van de leverancier in Priority"
         )
-    
+
     with col2:
         suppl_date = st.date_input(
             "Datum prijslijst (SUPPLDATE):",
@@ -1500,7 +1354,7 @@ if 'final_result' in st.session_state:
             key="suppl_date",
             help="Ingangsdatum van de prijslijst (dd/mm/jjjj)"
         )
-        
+
         currency_code = st.text_input(
             "Valutacode (CODE):",
             value="EUR",
@@ -1508,11 +1362,10 @@ if 'final_result' in st.session_state:
             key="currency_code",
             help="Standaard: EUR"
         )
-    
-    # Optionele velden
+
     with st.expander("➕ Extra prijslijst opties (optioneel)"):
         col1, col2 = st.columns(2)
-        
+
         with col1:
             suppl_des = st.text_input(
                 "Prijslijst omschrijving (SUPPLDES):",
@@ -1521,7 +1374,7 @@ if 'final_result' in st.session_state:
                 key="suppl_des",
                 help="Max 16 karakters"
             )
-            
+
             expiry_date = st.date_input(
                 "Vervaldatum (EXPIRYDATE):",
                 value=None,
@@ -1529,7 +1382,7 @@ if 'final_result' in st.session_state:
                 key="expiry_date",
                 help="Optioneel - Vervaldatum prijslijst"
             )
-        
+
         with col2:
             mnf_name = st.text_input(
                 "Fabrikantcode (MNFNAME):",
@@ -1538,7 +1391,7 @@ if 'final_result' in st.session_state:
                 key="mnf_name",
                 help="Optioneel - Max 10 karakters"
             )
-            
+
             multiply_price = st.number_input(
                 "Prijsfactor (MULTIPLYPRICE):",
                 value=1.0,
@@ -1547,60 +1400,57 @@ if 'final_result' in st.session_state:
                 key="multiply_price",
                 help="Standaard: 1.0"
             )
-    
-    # Validatie header velden
+
     if not suppl_name or not sup_name or not suppl_date:
         st.warning("⚠️ Vul prijslijstcode, leverancierscode en datum in om verder te gaan.")
         st.stop()
-    
-    # Functie om datum te formatteren voor Priority API
+
     def format_date_for_priority(date_obj):
-        """Converteer Python date naar Priority DateTimeOffset format"""
+        """Converteer Python date naar Priority DateTimeOffset formaat"""
         if date_obj is None:
             return None
-        # Format: 2018-03-15T00:00:00+02:00
         return f"{date_obj.strftime('%Y-%m-%d')}T00:00:00+02:00"
-    
+
     st.success(f"✅ Prijslijst: **{suppl_name}** voor leverancier **{sup_name}** per **{suppl_date.strftime('%d/%m/%Y')}**")
-    
+
     # ============================================
     # 5.2 KOLOM MAPPING (SPARTPRICE)
     # ============================================
     st.subheader("🔗 Kolom Mapping (SPARTPRICE)")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        # Artikelnummer kolom
-        partname_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['article', 'artikel', 'partname', 'part_name', 'artikelnummer', 'article_code', 'supplier_code'])]
+        partname_candidates = [
+            c for c in final_result.columns
+            if any(x in c.lower() for x in ['article', 'artikel', 'partname', 'artikelnummer', 'article_code', 'supplier_code', 'code'])
+        ]
         default_partname = partname_candidates[0] if partname_candidates else final_result.columns[0]
-        
+
         spl_partname_col = st.selectbox(
             "Artikelnummer (→ PARTNAME):",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_partname) if default_partname in final_result.columns else 0,
             key="spl_partname_col"
         )
-        
-        # Prijs kolom
+
         price_candidates = [c for c in final_result.columns if 'prijs' in c.lower() or 'price' in c.lower()]
         default_price = 'Nieuwe prijs' if 'Nieuwe prijs' in final_result.columns else (price_candidates[0] if price_candidates else final_result.columns[0])
-        
+
         spl_price_col = st.selectbox(
             "Prijs (→ PRICE):",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(default_price) if default_price in final_result.columns else 0,
             key="spl_price_col"
         )
-    
+
     with col2:
-        # Aantal (QUANT)
         use_quant_col = st.checkbox("Aantal uit kolom halen", value=False, key="use_quant_col")
-        
+
         if use_quant_col:
             quant_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['quant', 'aantal', 'qty', 'quantity', 'step'])]
             default_quant = quant_candidates[0] if quant_candidates else final_result.columns[0]
-            
+
             spl_quant_col = st.selectbox(
                 "Aantal (→ QUANT):",
                 options=final_result.columns.tolist(),
@@ -1616,32 +1466,29 @@ if 'final_result' in st.session_state:
                 value=1,
                 key="default_quant_value"
             )
-    
+
     # Extra preview kolommen
-    available_extra_cols = [c for c in final_result.columns if c not in [spl_partname_col, spl_price_col, status_col]]
-    
+    available_extra_cols = [c for c in final_result.columns if c not in [spl_partname_col, spl_price_col, status_col, 'priority_id']]
     spl_extra_preview_cols = st.multiselect(
         "Extra kolommen in preview:",
         options=available_extra_cols,
         default=[c for c in available_extra_cols if any(x in c.lower() for x in ['name', 'naam', 'omschrijving', 'family', 'group'])][:3],
         key="spl_extra_preview_cols"
     )
-    
+
     # ============================================
     # 5.3 FILTER SELECTIE
     # ============================================
     st.subheader("📊 Welke artikelen opnemen?")
-    
+
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         spl_include_increases = st.checkbox("🔴 Prijsverhogingen", value=True, key="spl_include_increases")
     with col2:
         spl_include_decreases = st.checkbox("🟢 Prijsverlagingen", value=True, key="spl_include_decreases")
     with col3:
         spl_include_unchanged = st.checkbox("⚪ Ongewijzigd", value=False, key="spl_include_unchanged")
-    
-    # Filter data
+
     spl_selected_statuses = []
     if spl_include_increases:
         spl_selected_statuses.append('🔴 Prijsverhoging')
@@ -1649,30 +1496,33 @@ if 'final_result' in st.session_state:
         spl_selected_statuses.append('🟢 Prijsverlaging')
     if spl_include_unchanged:
         spl_selected_statuses.append('⚪ Ongewijzigd')
-    
+
     if not spl_selected_statuses:
         st.warning("⚠️ Selecteer minimaal één categorie.")
         st.stop()
-    
-    # Filter op status en geldig artikelnummer
+
+    # HARD FILTER: priority_id moet gevuld zijn
     spl_push_df = final_result[
         (final_result[status_col].isin(spl_selected_statuses)) &
         (final_result[spl_partname_col].notna()) &
         (final_result[spl_partname_col].astype(str).str.strip() != '') &
-        (final_result[spl_partname_col].astype(str).str.lower() != 'nan')
+        (final_result[spl_partname_col].astype(str).str.lower() != 'nan') &
+        (final_result['priority_id'].notna()) &
+        (final_result['priority_id'].astype(str).str.strip() != '') &
+        (final_result['priority_id'].astype(str).str.lower() != 'nan')
     ].copy()
-    
-    st.info(f"📋 {len(spl_push_df)} artikelen geselecteerd")
-    
+
+    st.info(f"📋 {len(spl_push_df)} artikelen geselecteerd (met priority_id)")
+
     if len(spl_push_df) == 0:
-        st.warning("⚠️ Geen artikelen gevonden.")
+        st.warning("⚠️ Geen artikelen gevonden met priority_id in de geselecteerde categorieën.")
         st.stop()
-    
+
     # ============================================
     # 5.4 KORTINGEN CONFIGURATIE
     # ============================================
     st.subheader("💰 Kortingen (ZVAR_VDISC1, ZVAR_VDISC2, ZVAR_VDISC3)")
-    
+
     discount_mode = st.radio(
         "Kortingen instellen:",
         options=[
@@ -1684,8 +1534,7 @@ if 'final_result' in st.session_state:
         key="discount_mode",
         horizontal=False
     )
-    
-    # Initialiseer korting variabelen
+
     fixed_disc1 = 0.0
     fixed_disc2 = 0.0
     fixed_disc3 = 0.0
@@ -1694,340 +1543,176 @@ if 'final_result' in st.session_state:
     disc1_col = None
     disc2_col = None
     disc3_col = None
-    
+
     if discount_mode == "📊 Vaste waarde voor hele prijslijst":
         st.write("**Vaste kortingspercentages:**")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            fixed_disc1 = st.number_input(
-                "Korting 1 (%):",
-                min_value=0.0,
-                max_value=100.0,
-                value=0.0,
-                step=0.5,
-                key="fixed_disc1"
-            )
-        with col2:
-            fixed_disc2 = st.number_input(
-                "Korting 2 (%):",
-                min_value=0.0,
-                max_value=100.0,
-                value=0.0,
-                step=0.5,
-                key="fixed_disc2"
-            )
-        with col3:
-            fixed_disc3 = st.number_input(
-                "Korting 3 (%):",
-                min_value=0.0,
-                max_value=100.0,
-                value=0.0,
-                step=0.5,
-                key="fixed_disc3"
-            )
-    
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            fixed_disc1 = st.number_input("Korting 1 (%):", 0.0, 100.0, 0.0, 0.5, key="fixed_disc1")
+        with c2:
+            fixed_disc2 = st.number_input("Korting 2 (%):", 0.0, 100.0, 0.0, 0.5, key="fixed_disc2")
+        with c3:
+            fixed_disc3 = st.number_input("Korting 3 (%):", 0.0, 100.0, 0.0, 0.5, key="fixed_disc3")
+
     elif discount_mode == "📁 Per familie/artikelgroep":
-        # Selecteer groepkolom
         group_col_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['group', 'family', 'categor', 'groep', 'familie', 'lijn', 'line'])]
-        
         discount_group_col = st.selectbox(
             "Groepeer op kolom:",
             options=final_result.columns.tolist(),
             index=final_result.columns.tolist().index(group_col_candidates[0]) if group_col_candidates else 0,
             key="discount_group_col"
         )
-        
-        # Haal unieke groepen op
+
         unique_groups = spl_push_df[discount_group_col].dropna().unique().tolist()
         unique_groups = sorted([str(g) for g in unique_groups if str(g).strip() != ''])
-        
-        if len(unique_groups) > 0 and len(unique_groups) <= 100:
-            st.write(f"**Kortingen per {discount_group_col}** ({len(unique_groups)} groepen):")
+
+        if 0 < len(unique_groups) <= 100:
             st.caption("💡 Tip: Je kunt waardes kopiëren/plakken in de tabel (Ctrl+C / Ctrl+V)")
-            
-            # Maak DataFrame voor bewerking
+
             group_discount_df = pd.DataFrame({
                 'Groep': unique_groups,
                 'Korting 1 (%)': [0.0] * len(unique_groups),
                 'Korting 2 (%)': [0.0] * len(unique_groups),
                 'Korting 3 (%)': [0.0] * len(unique_groups)
             })
-            # Toon bewerkbare tabel
+
             edited_group_discounts = st.data_editor(
                 group_discount_df,
-                column_config={
-                    'Groep': st.column_config.TextColumn('Groep', disabled=True, width="large"),
-                    'Korting 1 (%)': st.column_config.NumberColumn('Korting 1 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                    'Korting 2 (%)': st.column_config.NumberColumn('Korting 2 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                    'Korting 3 (%)': st.column_config.NumberColumn('Korting 3 (%)', min_value=0.0, max_value=100.0, step=0.5, format="%.2f"),
-                },
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
                 key="group_discount_editor"
             )
-            
-            # Converteer naar dictionary
+
             for _, row in edited_group_discounts.iterrows():
-                group_discounts[str(row['Groep'])] = {
-                    'disc1': float(row['Korting 1 (%)']),
-                    'disc2': float(row['Korting 2 (%)']),
-                    'disc3': float(row['Korting 3 (%)'])
-                }
-        
-        elif len(unique_groups) > 100:
-            st.warning(f"⚠️ Te veel groepen ({len(unique_groups)}). Gebruik 'Vaste waarde' of 'Uit kolommen'.")
-            discount_mode = "❌ Geen kortingen (alleen prijs)"
-        else:
-            st.warning("⚠️ Geen groepen gevonden in de geselecteerde kolom.")
-    
-    elif discount_mode == "📋 Uit kolommen in bestand":
-        st.write("**Selecteer kolommen met kortingspercentages:**")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        # Zoek kandidaat kolommen voor kortingen
-        disc_candidates = [c for c in final_result.columns if any(x in c.lower() for x in ['disc', 'kort', 'korting', 'discount', 'perc', 'vdisc'])]
-        
-        with col1:
-            disc1_options = ['(geen)'] + final_result.columns.tolist()
-            default_disc1_idx = 0
-            for i, opt in enumerate(disc1_options):
-                if any(x in opt.lower() for x in ['disc1', 'disc_1', 'korting1', 'korting_1', 'vdisc1']):
-                    default_disc1_idx = i
-                    break
-            
-            disc1_col = st.selectbox(
-                "Korting 1 kolom (→ ZVAR_VDISC1):",
-                options=disc1_options,
-                index=default_disc1_idx,
-                key="disc1_col"
-            )
-            if disc1_col == '(geen)':
-                disc1_col = None
-        
-        with col2:
-            disc2_options = ['(geen)'] + final_result.columns.tolist()
-            default_disc2_idx = 0
-            for i, opt in enumerate(disc2_options):
-                if any(x in opt.lower() for x in ['disc2', 'disc_2', 'korting2', 'korting_2', 'vdisc2']):
-                    default_disc2_idx = i
-                    break
-            
-            disc2_col = st.selectbox(
-                "Korting 2 kolom (→ ZVAR_VDISC2):",
-                options=disc2_options,
-                index=default_disc2_idx,
-                key="disc2_col"
-            )
-            if disc2_col == '(geen)':
-                disc2_col = None
-        
-        with col3:
-            disc3_options = ['(geen)'] + final_result.columns.tolist()
-            default_disc3_idx = 0
-            for i, opt in enumerate(disc3_options):
-                if any(x in opt.lower() for x in ['disc3', 'disc_3', 'korting3', 'korting_3', 'vdisc3']):
-                    default_disc3_idx = i
-                    break
-            
-            disc3_col = st.selectbox(
-                "Korting 3 kolom (→ ZVAR_VDISC3):",
-                options=disc3_options,
-                index=default_disc3_idx,
-                key="disc3_col"
-            )
-            if disc3_col == '(geen)':
-                disc3_col = None
-        
-        # Toon preview van geselecteerde kolommen
-        if disc1_col or disc2_col or disc3_col:
-            preview_disc_cols = [spl_partname_col]
-            if disc1_col:
-                preview_disc_cols.append(disc1_col)
-            if disc2_col:
-                preview_disc_cols.append(disc2_col)
-            if disc3_col:
-                preview_disc_cols.append(disc3_col)
-            
-            with st.expander("👀 Preview kortingskolommen"):
-                st.dataframe(
-                    spl_push_df[preview_disc_cols].head(10),
-                    use_container_width=True,
-                    hide_index=True
+                group_discounts[str(row['Groep'])] = (
+                    float(row['Korting 1 (%)']),
+                    float(row['Korting 2 (%)']),
+                    float(row['Korting 3 (%)'])
                 )
-    
-    # ============================================
-    # 5.5 BEREKEN FINALE DATA
-    # ============================================
-    
-    def get_discount_values(row):
-        """Haal kortingswaarden op basis van gekozen modus"""
-        disc1 = 0.0
-        disc2 = 0.0
-        disc3 = 0.0
-        
-        if discount_mode == "❌ Geen kortingen (alleen prijs)":
-            return None, None, None
-        
-        elif discount_mode == "📊 Vaste waarde voor hele prijslijst":
-            disc1 = fixed_disc1
-            disc2 = fixed_disc2
-            disc3 = fixed_disc3
-        
-        elif discount_mode == "📁 Per familie/artikelgroep":
-            if discount_group_col:
-                group = str(row.get(discount_group_col, ''))
-                group_vals = group_discounts.get(group, {'disc1': 0.0, 'disc2': 0.0, 'disc3': 0.0})
-                disc1 = group_vals['disc1']
-                disc2 = group_vals['disc2']
-                disc3 = group_vals['disc3']
-        
-        elif discount_mode == "📋 Uit kolommen in bestand":
-            try:
-                if disc1_col:
-                    val = row.get(disc1_col, 0)
-                    disc1 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
-                if disc2_col:
-                    val = row.get(disc2_col, 0)
-                    disc2 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
-                if disc3_col:
-                    val = row.get(disc3_col, 0)
-                    disc3 = float(str(val).replace(',', '.').replace('%', '').strip()) if pd.notna(val) and str(val).strip() != '' else 0.0
-            except (ValueError, TypeError):
-                pass
-        
-        return disc1, disc2, disc3
-    
+        else:
+            st.warning("⚠️ Geen/te veel groepen gevonden. Kies andere kortingmodus.")
+            discount_mode = "❌ Geen kortingen (alleen prijs)"
+
+    elif discount_mode == "📋 Uit kolommen in bestand":
+        options = ['(geen)'] + final_result.columns.tolist()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            disc1_col = st.selectbox("Korting 1 kolom:", options=options, index=0, key="disc1_col")
+            if disc1_col == '(geen)': disc1_col = None
+        with c2:
+            disc2_col = st.selectbox("Korting 2 kolom:", options=options, index=0, key="disc2_col")
+            if disc2_col == '(geen)': disc2_col = None
+        with c3:
+            disc3_col = st.selectbox("Korting 3 kolom:", options=options, index=0, key="disc3_col")
+            if disc3_col == '(geen)': disc3_col = None
+
     def parse_price(value):
-        """Converteer prijs naar float"""
         if pd.isna(value) or value is None:
             return None
         try:
             return float(str(value).replace(',', '.').replace('€', '').replace(' ', '').strip())
-        except (ValueError, TypeError):
+        except:
             return None
-    
-    def parse_quantity(value):
-        """Converteer aantal naar integer"""
+
+    def parse_quantity(value, default_val=1):
         if pd.isna(value) or value is None:
-            return default_quant_value
+            return default_val
         try:
             return int(float(str(value).replace(',', '.').strip()))
-        except (ValueError, TypeError):
-            return default_quant_value
-    
-    # Bereid data voor
+        except:
+            return default_val
+
+    def parse_pct(v):
+        if pd.isna(v) or str(v).strip() == '':
+            return 0.0
+        try:
+            return float(str(v).replace(',', '.').replace('%', '').strip())
+        except:
+            return 0.0
+
     spl_push_df['_price'] = spl_push_df[spl_price_col].apply(parse_price)
-    
-    if spl_quant_col:
-        spl_push_df['_quant'] = spl_push_df[spl_quant_col].apply(parse_quantity)
-    else:
-        spl_push_df['_quant'] = default_quant_value
-    
-    # Kortingen toevoegen
-    if discount_mode != "❌ Geen kortingen (alleen prijs)":
-        discount_data = spl_push_df.apply(get_discount_values, axis=1)
-        spl_push_df['_disc1'] = [d[0] for d in discount_data]
-        spl_push_df['_disc2'] = [d[1] for d in discount_data]
-        spl_push_df['_disc3'] = [d[2] for d in discount_data]
-    
-    # Filter ongeldige prijzen
     spl_push_df = spl_push_df[spl_push_df['_price'].notna()].copy()
-    
-    if len(spl_push_df) == 0:
-        st.warning("⚠️ Geen artikelen met geldige prijzen gevonden.")
-        st.stop()
-    
+
+    if spl_quant_col:
+        spl_push_df['_quant'] = spl_push_df[spl_quant_col].apply(lambda v: parse_quantity(v, default_quant_value))
+    else:
+        spl_push_df['_quant'] = int(default_quant_value)
+
+    # kortingen
+    if discount_mode == "❌ Geen kortingen (alleen prijs)":
+        spl_push_df['_disc1'] = None
+        spl_push_df['_disc2'] = None
+        spl_push_df['_disc3'] = None
+    elif discount_mode == "📊 Vaste waarde voor hele prijslijst":
+        spl_push_df['_disc1'] = fixed_disc1
+        spl_push_df['_disc2'] = fixed_disc2
+        spl_push_df['_disc3'] = fixed_disc3
+    elif discount_mode == "📁 Per familie/artikelgroep":
+        def grp(row):
+            key = str(row.get(discount_group_col, ""))
+            d = group_discounts.get(key, (0.0, 0.0, 0.0))
+            return d
+        vals = spl_push_df.apply(grp, axis=1)
+        spl_push_df['_disc1'] = [v[0] for v in vals]
+        spl_push_df['_disc2'] = [v[1] for v in vals]
+        spl_push_df['_disc3'] = [v[2] for v in vals]
+    else:
+        spl_push_df['_disc1'] = spl_push_df[disc1_col].apply(parse_pct) if disc1_col else None
+        spl_push_df['_disc2'] = spl_push_df[disc2_col].apply(parse_pct) if disc2_col else None
+        spl_push_df['_disc3'] = spl_push_df[disc3_col].apply(parse_pct) if disc3_col else None
+
     # ============================================
     # 5.6 PREVIEW
     # ============================================
     st.subheader("👁️ Preview")
-    
-    # Bouw preview kolommen
-    preview_cols = [spl_partname_col]
-    for col in spl_extra_preview_cols:
-        if col in spl_push_df.columns and col not in preview_cols:
-            preview_cols.append(col)
-    
-    preview_cols.extend(['_quant', '_price'])
-    
+
+    preview_cols = [spl_partname_col, 'priority_id'] + spl_extra_preview_cols + ['_quant', '_price']
     if discount_mode != "❌ Geen kortingen (alleen prijs)":
-        preview_cols.extend(['_disc1', '_disc2', '_disc3'])
-    
-    preview_cols.append(status_col)
-    
-    # Maak preview DataFrame
-    preview_df = spl_push_df[preview_cols].copy()
-    
-    # Hernoem kolommen voor duidelijkheid
-    rename_map = {
+        preview_cols += ['_disc1', '_disc2', '_disc3']
+    preview_cols += [status_col]
+
+    preview_cols = [c for c in preview_cols if c in spl_push_df.columns]
+
+    preview_df = spl_push_df[preview_cols].copy().rename(columns={
         '_quant': 'Aantal',
         '_price': 'Prijs',
         '_disc1': 'Korting 1 (%)',
         '_disc2': 'Korting 2 (%)',
         '_disc3': 'Korting 3 (%)'
-    }
-    preview_df = preview_df.rename(columns=rename_map)
-    
-    # Column config
-    preview_col_config = {
-        'Prijs': st.column_config.NumberColumn(format="€ %.2f"),
-        'Aantal': st.column_config.NumberColumn(format="%d"),
-        'Korting 1 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-        'Korting 2 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-        'Korting 3 (%)': st.column_config.NumberColumn(format="%.2f %%"),
-    }
-    
-    st.dataframe(
-        preview_df.head(50),
-        use_container_width=True,
-        hide_index=True,
-        column_config=preview_col_config
-    )
-    
+    })
+
+    st.dataframe(preview_df.head(50), use_container_width=True, hide_index=True)
+
     if len(spl_push_df) > 50:
         st.caption(f"... en {len(spl_push_df) - 50} meer artikelen")
-    
-    # Samenvatting
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Artikelen", len(spl_push_df))
-    col2.metric("Gem. prijs", f"€{spl_push_df['_price'].mean():.2f}")
-    col3.metric("Totale waarde", f"€{spl_push_df['_price'].sum():,.2f}")
-    if discount_mode != "❌ Geen kortingen (alleen prijs)":
-        col4.metric("Gem. korting 1", f"{spl_push_df['_disc1'].mean():.1f}%")
     
     # ============================================
     # 5.7 PUSH NAAR PRIORITY (PATCH)
     # ============================================
     st.divider()
-    
-    # Priority API configuratie
+    st.subheader("🚀 5.7 Patch leveranciersprijslijst naar Priority (SUPPRICELIST)")
+
     PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
     PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
-    
-    # Toon wat er wordt bijgewerkt
+
     st.write("**Prijslijst die wordt bijgewerkt:**")
-    
-    header_info = {
+    st.json({
         "SUPPLNAME": suppl_name,
         "SUPNAME": sup_name,
         "SUPPLDATE": suppl_date.strftime('%d/%m/%Y'),
         "CODE": currency_code
-    }
-    if suppl_des:
-        header_info["SUPPLDES"] = suppl_des
-    if expiry_date:
-        header_info["EXPIRYDATE"] = expiry_date.strftime('%d/%m/%Y')
-    if mnf_name:
-        header_info["MNFNAME"] = mnf_name
-    
-    st.json(header_info)
-    
-    # Push knoppen
+    })
+
+    # Toggle: kortingen meesturen?
+    include_discounts = st.checkbox(
+        "Kortingen meesturen (ZVAR_VDISC1/2/3)",
+        value=True,
+        help="Zet uit om alleen PARTNAME, QUANT en PRICE te patchen.",
+        key="spl_include_discounts"
+    )
+
     col1, col2 = st.columns([3, 1])
-    
     with col1:
         spl_push_button = st.button(
             f"✏️ Update prijslijst met {len(spl_push_df)} artikelen",
@@ -2035,71 +1720,51 @@ if 'final_result' in st.session_state:
             use_container_width=True,
             key="spl_push_to_priority"
         )
-    
     with col2:
-        spl_dry_run = st.checkbox("🧪 Test mode", value=True, key="spl_dry_run", help="Simuleert push zonder echte API calls")
-    
+        spl_dry_run = st.checkbox("🧪 Test mode", value=True, key="spl_dry_run")
+
     if spl_push_button:
         import requests
-        import urllib.parse
         import time
-        
-        # Progress
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("⏳ Voorbereiden prijslijst data...")
-        
-        # ============================================
-        # STAP 1: BOUW SUBFORM ITEMS
-        # ============================================
-        
+        import json
+
+        # URL (Key = SUPPLNAME + SUPPLDATE)
+        formatted_date = format_date_for_priority(suppl_date)
+        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
+
+        # Subform items bouwen
         subform_items = []
-        
-        for idx, (_, row) in enumerate(spl_push_df.iterrows()):
+        for _, row in spl_push_df.iterrows():
             partname = str(row[spl_partname_col]).strip()
-            price = row['_price']
-            quant = row['_quant']
-            
+
             item = {
                 "PARTNAME": partname,
-                "QUANT": int(quant),
-                "PRICE": round(float(price), 2)
+                "QUANT": int(row['_quant']),
+                "PRICE": round(float(row['_price']), 2)
             }
-            
-            # Voeg kortingen toe indien van toepassing
-            if discount_mode != "❌ Geen kortingen (alleen prijs)":
-                disc1 = row.get('_disc1', 0.0)
-                disc2 = row.get('_disc2', 0.0)
-                disc3 = row.get('_disc3', 0.0)
-                
-                if disc1 and disc1 > 0:
-                    item["ZVAR_VDISC1"] = round(float(disc1), 2)
-                if disc2 and disc2 > 0:
-                    item["ZVAR_VDISC2"] = round(float(disc2), 2)
-                if disc3 and disc3 > 0:
-                    item["ZVAR_VDISC3"] = round(float(disc3), 2)
-            
+
+            # Kortingen optioneel meesturen
+            if include_discounts and discount_mode != "❌ Geen kortingen (alleen prijs)":
+                d1 = row.get('_disc1', None)
+                d2 = row.get('_disc2', None)
+                d3 = row.get('_disc3', None)
+
+                # Alleen meesturen als ze niet None zijn (0.0 is ok om mee te sturen)
+                if d1 is not None:
+                    item["ZVAR_VDISC1"] = round(float(d1), 2)
+                if d2 is not None:
+                    item["ZVAR_VDISC2"] = round(float(d2), 2)
+                if d3 is not None:
+                    item["ZVAR_VDISC3"] = round(float(d3), 2)
+
             subform_items.append(item)
-        
-        progress_bar.progress(0.1)
-        status_text.text(f"⏳ Payload voorbereid: {len(subform_items)} artikelen")
-        
-        # ============================================
-        # STAP 2: BOUW URL EN PAYLOAD VOOR PATCH
-        # ============================================
-        
-        # URL format: SUPPRICELIST(SUPPLNAME='code',SUPPLDATE=2018-03-15T00:00:00+02:00)
-        formatted_date = format_date_for_priority(suppl_date)
-        
-        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
-        
-        # Payload: subform items + optionele header updates
+
+        # Payload opbouwen
         payload = {
             "SPARTPRICE_SUBFORM": subform_items
         }
-        
-        # Optioneel: header velden meesturen als ze gewijzigd moeten worden
+
+        # Optionele header updates meesturen
         if suppl_des:
             payload["SUPPLDES"] = suppl_des
         if currency_code and currency_code != "EUR":
@@ -2110,194 +1775,87 @@ if 'final_result' in st.session_state:
             payload["MULTIPLYPRICE"] = multiply_price
         if expiry_date:
             payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
-        
-        # ============================================
-        # STAP 3: TOON PAYLOAD (DEBUG)
-        # ============================================
-        
-        with st.expander("🔧 Debug: Bekijk request details"):
-            st.write(f"**Methode:** PATCH")
-            st.write(f"**URL:** `{url}`")
-            st.write("**Payload (eerste 5 artikelen):**")
-            debug_payload = payload.copy()
-            debug_payload["SPARTPRICE_SUBFORM"] = subform_items[:5]
-            st.json(debug_payload)
+
+        # Debug
+        with st.expander("🔧 Debug: Request details (SUPPRICELIST PATCH)"):
+            st.write("URL:", url)
+            st.write("Items:", len(subform_items))
+            preview_payload = payload.copy()
+            preview_payload["SPARTPRICE_SUBFORM"] = subform_items[:5]
+            st.json(preview_payload)
             if len(subform_items) > 5:
                 st.caption(f"... en {len(subform_items) - 5} meer items")
-        
-        # ============================================
-        # STAP 4: PATCH NAAR PRIORITY
-        # ============================================
-        
+
         if spl_dry_run:
-            # Simuleer succes
-            progress_bar.progress(0.5)
-            status_text.text("🧪 Test mode: Simuleren van PATCH request...")
-            time.sleep(1)
-            
-            progress_bar.progress(1.0)
-            status_text.empty()
-            progress_bar.empty()
-            
-            st.success(f"🧪 **Test mode**: Prijslijst zou succesvol bijgewerkt worden met {len(subform_items)} artikelen.")
-            
-            # Toon samenvatting
-            st.write("**Samenvatting (test mode):**")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Prijslijstcode", suppl_name)
-            col2.metric("Leverancier", sup_name)
-            col3.metric("Artikelen", len(subform_items))
-            
-            # Sla resultaten op
-            st.session_state['spl_push_result'] = {
-                'status': 'test_success',
-                'url': url,
-                'payload': payload,
-                'item_count': len(subform_items)
-            }
-            
+            st.success(f"🧪 Test mode: zou prijslijst **{suppl_name}** updaten met {len(subform_items)} artikelen.")
         else:
-            # Echte API call
-            try:
-                progress_bar.progress(0.3)
-                status_text.text("⏳ Verbinden met Priority API...")
-                
-                headers = {
-                    'Authorization': PRIORITY_AUTH,
-                    'Content-Type': 'application/json'
-                }
-                
-                progress_bar.progress(0.5)
-                status_text.text(f"⏳ Bijwerken prijslijst met {len(subform_items)} artikelen...")
-                
-                response = requests.patch(
-                    url,
-                    json=payload,
-                    headers=headers,
-                    timeout=120
-                )
-                
-                progress_bar.progress(0.9)
-                status_text.text("⏳ Verwerken response...")
-                
-                if response.status_code in [200, 204]:
-                    progress_bar.progress(1.0)
-                    status_text.empty()
-                    progress_bar.empty()
-                    
-                    st.success(f"🎉 Prijslijst **{suppl_name}** succesvol bijgewerkt met {len(subform_items)} artikelen!")
-                    
-                    # Toon response
-                    try:
-                        if response.text:
-                            response_data = response.json()
-                            with st.expander("📄 API Response"):
-                                st.json(response_data)
-                    except:
-                        pass
-                    
-                    # Sla resultaat op
-                    st.session_state['spl_push_result'] = {
-                        'status': 'success',
-                        'payload': payload,
-                        'item_count': len(subform_items),
-                        'response': response.text[:1000] if response.text else None
-                    }
-                    
-                else:
-                    progress_bar.empty()
-                    status_text.empty()
-                    
-                    # Parse error
-                    error_msg = f"HTTP {response.status_code}"
-                    error_detail = ""
-                    
-                    try:
-                        error_data = response.json()
-                        if 'error' in error_data:
-                            error_msg = error_data['error'].get('message', error_msg)
-                            error_detail = str(error_data['error'].get('innererror', ''))
-                    except:
-                        error_detail = response.text[:500] if response.text else ""
-                    
-                    st.error(f"❌ Fout bij bijwerken prijslijst: {error_msg}")
-                    
-                    if error_detail:
-                        with st.expander("🔍 Error details"):
-                            st.code(error_detail)
-                    
-                    # Sla resultaat op voor retry
-                    st.session_state['spl_push_result'] = {
-                        'status': 'error',
-                        'payload': payload,
-                        'item_count': len(subform_items),
-                        'error': error_msg,
-                        'error_detail': error_detail
-                    }
-            
-            except requests.exceptions.Timeout:
-                progress_bar.empty()
-                status_text.empty()
-                
-                st.error("❌ Timeout: De request duurde te lang. Probeer opnieuw of verminder het aantal artikelen.")
-                
-                st.session_state['spl_push_result'] = {
-                    'status': 'timeout',
-                    'payload': payload,
-                    'item_count': len(subform_items)
-                }
-            
-            except requests.exceptions.RequestException as e:
-                progress_bar.empty()
-                status_text.empty()
-                
-                st.error(f"❌ Verbindingsfout: {str(e)}")
-                
-                st.session_state['spl_push_result'] = {
-                    'status': 'connection_error',
-                    'payload': payload,
-                    'item_count': len(subform_items),
-                    'error': str(e)
-                }
-        
-        # ============================================
-        # STAP 5: DOWNLOAD OPTIES
-        # ============================================
-        st.divider()
+            headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
+
+            with st.spinner(f"Bezig met patchen van prijslijst {suppl_name}..."):
+                resp = requests.patch(url, json=payload, headers=headers, timeout=180)
+
+            if resp.status_code in (200, 204):
+                st.success(f"🎉 Prijslijst **{suppl_name}** succesvol bijgewerkt met {len(subform_items)} artikelen!")
+            else:
+                st.error(f"❌ Fout bij bijwerken prijslijst: HTTP {resp.status_code}")
+                st.code(resp.text[:1500] if resp.text else "(geen body)")
+
+        # Downloads
         st.subheader("📥 Download")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Download payload als JSON
-            import json
+
+        dcol1, dcol2 = st.columns(2)
+
+        with dcol1:
             payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
-            
             st.download_button(
                 label="📥 Download payload (JSON)",
                 data=payload_json,
-                file_name=f"prijslijst_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.json",
+                file_name=f"priority_suppricelist_patch_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.json",
                 mime="application/json",
-                key="download_spl_payload"
+                key="download_spl_payload_json"
             )
-        
-        with col2:
-            # Download artikellijst als Excel
+
+        with dcol2:
             export_df = spl_push_df[[spl_partname_col, '_quant', '_price']].copy()
             export_df.columns = ['Artikelnummer', 'Aantal', 'Prijs']
-            
-            if discount_mode != "❌ Geen kortingen (alleen prijs)":
-                export_df['Korting 1 (%)'] = spl_push_df['_disc1']
-                export_df['Korting 2 (%)'] = spl_push_df['_disc2']
-                export_df['Korting 3 (%)'] = spl_push_df['_disc3']
-            
+
+            if include_discounts and discount_mode != "❌ Geen kortingen (alleen prijs)":
+                export_df['Korting 1 (%)'] = spl_push_df.get('_disc1', None)
+                export_df['Korting 2 (%)'] = spl_push_df.get('_disc2', None)
+                export_df['Korting 3 (%)'] = spl_push_df.get('_disc3', None)
+
             st.download_button(
                 label="📥 Download artikellijst (Excel)",
                 data=convert_to_excel(export_df),
-                file_name=f"prijslijst_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.xlsx",
+                file_name=f"priority_suppricelist_items_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_spl_articles"
+                key="download_spl_items_excel"
             )
+
+        # Retry
+        st.divider()
+        st.subheader("🔄 Opnieuw proberen")
+
+        retry_spl = st.button(
+            "🔄 Retry patch (zelfde payload opnieuw versturen)",
+            type="secondary",
+            use_container_width=True,
+            key="retry_spl_patch"
+        )
+
+        if retry_spl:
+            if spl_dry_run:
+                st.info("Test mode staat aan; zet uit om echt te retryen.")
+            else:
+                headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
+                with st.spinner("Retry bezig..."):
+                    resp2 = requests.patch(url, json=payload, headers=headers, timeout=180)
+
+                if resp2.status_code in (200, 204):
+                    st.success("🎉 Retry succesvol!")
+                else:
+                    st.error(f"❌ Retry mislukt: HTTP {resp2.status_code}")
+                    st.code(resp2.text[:1500] if resp2.text else "(geen body)")
     
     # ============================================
     # 5.8 RETRY BIJ FOUT
