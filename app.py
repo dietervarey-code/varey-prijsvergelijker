@@ -1009,9 +1009,9 @@ if 'final_result' in st.session_state:
             key="push_to_priority"
         )
     with col2:
-        dry_run = st.checkbox("🧪 Test mode", value=False)
+        dry_run = st.checkbox("🧪 Test mode", value=False, key="dry_run_priority")
 
-if push_button:
+    if push_button:
     # ------------------------------------------------------------
     # PARALLEL PUSH (batches van 500) + retries + session reuse
     # ------------------------------------------------------------
