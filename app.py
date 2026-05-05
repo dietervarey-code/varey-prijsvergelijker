@@ -998,7 +998,6 @@ if 'final_result' in st.session_state:
 
     PRIORITY_BASE = "https://p.priority-connect.online/odata/Priority/tabCA637.ini/vareydb/"
     PRIORITY_AUTH = "Basic Q0E5RTFDNTgxNEJENDNEMEI3RDlBNTI1RDFCOThGQ0Y6UEFU"
-    BATCH_SIZE = 200
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -1231,93 +1230,94 @@ if 'final_result' in st.session_state:
             
             if retry_button:
                 import requests
-                import urllib.parse
                 import time
-                
-                # Haal originele data op (gebruik _for_retry keys)
+                import urllib.parse
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                # Settings retry
+                RETRY_BATCH_SIZE = 500
+                RETRY_MAX_WORKERS = 6
+                RETRY_MAX_RETRIES = 3
+                RETRY_TIMEOUT = 60
+                RETRY_SLEEP_BETWEEN_BATCHES = 0.5
+
                 retry_push_df = st.session_state['push_df_for_retry']
                 retry_partname_col = st.session_state['partname_col_for_retry']
-                
-                # Filter alleen mislukte items
+
                 failed_partnames = failed_items['partname'].astype(str).tolist()
                 retry_df = retry_push_df[retry_push_df[retry_partname_col].astype(str).isin(failed_partnames)].copy()
-                
-                # Resultaten bijhouden
+
+                # Maak 1 session
+                session = requests.Session()
+                session.headers.update({
+                    "Authorization": PRIORITY_AUTH,
+                    "Content-Type": "application/json"
+                })
+
+                def retry_one(partname: str, final_price: float):
+                    encoded_partname = urllib.parse.quote(str(partname).strip(), safe='')
+                    url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
+                    payload = {"BASEPLPRICE": float(final_price)}
+
+                    last_error = None
+
+                    for attempt in range(1, RETRY_MAX_RETRIES + 1):
+                        try:
+                            resp = session.patch(url, json=payload, timeout=RETRY_TIMEOUT)
+                            if resp.status_code in (200, 204):
+                                return {"partname": partname, "new_price": float(final_price), "status": "✅ Succes", "error": None}
+                            if resp.status_code in (429, 500, 502, 503, 504):
+                                last_error = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+                                time.sleep((2 ** (attempt - 1)) + 0.1)
+                                continue
+                            return {"partname": partname, "new_price": float(final_price), "status": "❌ Mislukt", "error": resp.text[:200]}
+                        except requests.exceptions.Timeout:
+                            last_error = "Timeout"
+                            time.sleep((2 ** (attempt - 1)) + 0.1)
+                            continue
+                        except requests.exceptions.RequestException as e:
+                            last_error = str(e)
+                            time.sleep((2 ** (attempt - 1)) + 0.1)
+                            continue
+
+                    return {"partname": partname, "new_price": float(final_price), "status": "❌ Mislukt (retries)", "error": last_error}
+
+                # Prepare items
+                items = list(zip(
+                    retry_df[retry_partname_col].astype(str).tolist(),
+                    retry_df["_final_price"].astype(float).tolist()
+                ))
+                total = len(items)
+
                 retry_results = []
                 retry_success = 0
                 retry_error = 0
-                
-                # Progress bar
-                retry_progress = st.progress(0)
-                retry_status = st.empty()
-                
-                for idx, (_, row) in enumerate(retry_df.iterrows()):
-                    partname = str(row[retry_partname_col]).strip()
-                    final_price = row['_final_price']
-                    
-                    # Update progress
-                    progress = (idx + 1) / len(retry_df)
-                    retry_progress.progress(progress)
-                    retry_status.text(f"🔄 Retry: {idx + 1}/{len(retry_df)} - Artikel {partname}")
-                    
-                    if retry_dry_run:
-                        retry_results.append({
-                            'partname': partname,
-                            'new_price': final_price,
-                            'status': '✅ Succes (test mode)',
-                            'error': None
-                        })
-                        retry_success += 1
-                        time.sleep(0.01)
-                    else:
-                        try:
-                            encoded_partname = urllib.parse.quote(partname, safe='')
-                            url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
-                            headers = {
-                                'Authorization': PRIORITY_AUTH,
-                                'Content-Type': 'application/json'
-                            }
-                            payload = {
-                                'BASEPLPRICE': final_price
-                            }
-                            
-                            response = requests.patch(url, json=payload, headers=headers, timeout=30)
-                            
-                            if response.status_code in [200, 204]:
-                                retry_results.append({
-                                    'partname': partname,
-                                    'new_price': final_price,
-                                    'status': '✅ Succes',
-                                    'error': None
-                                })
+
+                def chunks(lst, n):
+                    for i in range(0, len(lst), n):
+                        yield lst[i:i+n]
+
+                for batch_idx, batch in enumerate(chunks(items, RETRY_BATCH_SIZE), start=1):
+                    retry_status.text(f"🔄 Retry batch {batch_idx} ({len(batch)} items, parallel {RETRY_MAX_WORKERS})")
+
+                    with ThreadPoolExecutor(max_workers=RETRY_MAX_WORKERS) as ex:
+                        futures = [ex.submit(retry_one, p, pr) for (p, pr) in batch]
+
+                        done_in_batch = 0
+                        for fut in as_completed(futures):
+                            res = fut.result()
+                            retry_results.append(res)
+
+                            done_in_batch += 1
+                            done_total = (batch_idx - 1) * RETRY_BATCH_SIZE + done_in_batch
+                            retry_progress.progress(min(done_total / total, 1.0))
+
+                            if res["status"].startswith("✅"):
                                 retry_success += 1
                             else:
-                                error_msg = f"HTTP {response.status_code}"
-                                try:
-                                    error_detail = response.json()
-                                    if 'error' in error_detail:
-                                        error_msg = error_detail['error'].get('message', error_msg)
-                                except:
-                                    error_msg = response.text[:200] if response.text else error_msg
-                                
-                                retry_results.append({
-                                    'partname': partname,
-                                    'new_price': final_price,
-                                    'status': '❌ Mislukt',
-                                    'error': error_msg
-                                })
                                 retry_error += 1
-                        
-                        except Exception as e:
-                            retry_results.append({
-                                'partname': partname,
-                                'new_price': final_price,
-                                'status': '❌ Fout',
-                                'error': str(e)
-                            })
-                            retry_error += 1
-                        
-                        time.sleep(0.1)  # Kleine delay
+
+                    time.sleep(RETRY_SLEEP_BETWEEN_BATCHES)
                 
                 # Verwijder progress
                 retry_progress.empty()
