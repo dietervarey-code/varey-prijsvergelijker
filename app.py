@@ -1009,7 +1009,7 @@ if 'final_result' in st.session_state:
             key="push_to_priority"
         )
     with col2:
-        dry_run = st.checkbox("🧪 Test mode", value=True)
+        dry_run = st.checkbox("🧪 Test mode", value=False)
 
     if push_button:
         import requests
@@ -1170,7 +1170,7 @@ if 'final_result' in st.session_state:
                 )
             
             with col2:
-                retry_dry_run = st.checkbox("🧪 Test mode", value=True, key="retry_dry_run")
+                retry_dry_run = st.checkbox("🧪 Test mode", value=False, key="retry_dry_run")
             
             if retry_button:
                 import requests
@@ -1688,7 +1688,7 @@ if 'final_result' in st.session_state:
         st.caption(f"... en {len(spl_push_df) - 50} meer artikelen")
     
     # ============================================
-    # 5.7 PUSH NAAR PRIORITY (PATCH)
+    # 5.7 PUSH NAAR PRIORITY (PATCH) - CHUNKED (max 500)
     # ============================================
     st.divider()
     st.subheader("🚀 5.7 Patch leveranciersprijslijst naar Priority (SUPPRICELIST)")
@@ -1704,7 +1704,6 @@ if 'final_result' in st.session_state:
         "CODE": currency_code
     })
 
-    # Toggle: kortingen meesturen?
     include_discounts = st.checkbox(
         "Kortingen meesturen (ZVAR_VDISC1/2/3)",
         value=True,
@@ -1721,20 +1720,15 @@ if 'final_result' in st.session_state:
             key="spl_push_to_priority"
         )
     with col2:
-        spl_dry_run = st.checkbox("🧪 Test mode", value=True, key="spl_dry_run")
+        spl_dry_run = st.checkbox("🧪 Test mode", value=False, key="spl_dry_run")
 
-    if spl_push_button:
-        import requests
-        import time
-        import json
+    def chunks(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i+n]
 
-        # URL (Key = SUPPLNAME + SUPPLDATE)
-        formatted_date = format_date_for_priority(suppl_date)
-        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
-
-        # Subform items bouwen
-        subform_items = []
-        for _, row in spl_push_df.iterrows():
+    def build_subform_items(df: pd.DataFrame):
+        subform_items_local = []
+        for _, row in df.iterrows():
             partname = str(row[spl_partname_col]).strip()
 
             item = {
@@ -1743,13 +1737,11 @@ if 'final_result' in st.session_state:
                 "PRICE": round(float(row['_price']), 2)
             }
 
-            # Kortingen optioneel meesturen
             if include_discounts and discount_mode != "❌ Geen kortingen (alleen prijs)":
                 d1 = row.get('_disc1', None)
                 d2 = row.get('_disc2', None)
                 d3 = row.get('_disc3', None)
 
-                # Alleen meesturen als ze niet None zijn (0.0 is ok om mee te sturen)
                 if d1 is not None:
                     item["ZVAR_VDISC1"] = round(float(d1), 2)
                 if d2 is not None:
@@ -1757,48 +1749,122 @@ if 'final_result' in st.session_state:
                 if d3 is not None:
                     item["ZVAR_VDISC3"] = round(float(d3), 2)
 
-            subform_items.append(item)
+            subform_items_local.append(item)
 
-        # Payload opbouwen
-        payload = {
-            "SPARTPRICE_SUBFORM": subform_items
-        }
+        return subform_items_local
 
-        # Optionele header updates meesturen
+    def build_header_payload():
+        header_payload = {}
+
         if suppl_des:
-            payload["SUPPLDES"] = suppl_des
+            header_payload["SUPPLDES"] = suppl_des
         if currency_code and currency_code != "EUR":
-            payload["CODE"] = currency_code
+            header_payload["CODE"] = currency_code
         if mnf_name:
-            payload["MNFNAME"] = mnf_name
+            header_payload["MNFNAME"] = mnf_name
         if multiply_price != 1.0:
-            payload["MULTIPLYPRICE"] = multiply_price
+            header_payload["MULTIPLYPRICE"] = multiply_price
         if expiry_date:
-            payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
+            header_payload["EXPIRYDATE"] = format_date_for_priority(expiry_date)
+
+        return header_payload
+
+    def run_suppricelist_patch():
+        import requests
+        import time
+
+        # URL (Key = SUPPLNAME + SUPPLDATE)
+        formatted_date = format_date_for_priority(suppl_date)
+        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
+
+        # Subform items bouwen
+        subform_items = build_subform_items(spl_push_df)
+
+        # Header payload (enkel in chunk 1 meesturen)
+        header_payload = build_header_payload()
 
         # Debug
         with st.expander("🔧 Debug: Request details (SUPPRICELIST PATCH)"):
             st.write("URL:", url)
-            st.write("Items:", len(subform_items))
-            preview_payload = payload.copy()
-            preview_payload["SPARTPRICE_SUBFORM"] = subform_items[:5]
+            st.write("Items totaal:", len(subform_items))
+            st.write("Chunk size:", 500)
+            preview_payload = {"SPARTPRICE_SUBFORM": subform_items[:5]}
+            preview_payload.update(header_payload)
             st.json(preview_payload)
             if len(subform_items) > 5:
                 st.caption(f"... en {len(subform_items) - 5} meer items")
 
         if spl_dry_run:
-            st.success(f"🧪 Test mode: zou prijslijst **{suppl_name}** updaten met {len(subform_items)} artikelen.")
+            st.success(f"🧪 Test mode: zou prijslijst **{suppl_name}** updaten met {len(subform_items)} items (in chunks).")
+            return None, url, header_payload, subform_items
+
+        headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
+
+        CHUNK_SIZE = 500
+        TIMEOUT_SECONDS = 300
+        SLEEP_BETWEEN = 0.5
+
+        total = len(subform_items)
+        chunk_count = (total + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+        progress = st.progress(0)
+        status = st.empty()
+
+        all_chunk_results = []
+        failed = False
+
+        with st.spinner("Bezig met patchen van prijslijst in chunks..."):
+            for idx, sub_items_chunk in enumerate(chunks(subform_items, CHUNK_SIZE), start=1):
+                chunk_payload = {"SPARTPRICE_SUBFORM": sub_items_chunk}
+
+                # Alleen in chunk 1 header updates meesturen
+                if idx == 1 and header_payload:
+                    chunk_payload.update(header_payload)
+
+                status.text(f"⏳ Chunk {idx}/{chunk_count} - items {len(sub_items_chunk)}")
+
+                resp = requests.patch(
+                    url,
+                    json=chunk_payload,
+                    headers=headers,
+                    timeout=TIMEOUT_SECONDS
+                )
+
+                ok = resp.status_code in (200, 204)
+                all_chunk_results.append({
+                    "chunk": idx,
+                    "items": len(sub_items_chunk),
+                    "http_status": resp.status_code,
+                    "ok": ok,
+                    "response_preview": (resp.text[:300] if resp.text else "")
+                })
+
+                if not ok:
+                    failed = True
+                    st.error(f"❌ Chunk {idx} mislukt: HTTP {resp.status_code}")
+                    if resp.text:
+                        st.code(resp.text[:1500])
+                    break
+
+                progress.progress(idx / chunk_count)
+                time.sleep(SLEEP_BETWEEN)
+
+        progress.empty()
+        status.empty()
+
+        # Resultaat tonen
+        if not failed:
+            st.success(f"🎉 Prijslijst **{suppl_name}** succesvol bijgewerkt in {chunk_count} chunks (max {CHUNK_SIZE}/chunk).")
         else:
-            headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
+            st.warning("⚠️ Patch stopte door een fout. Zie chunk resultaten hieronder.")
 
-            with st.spinner(f"Bezig met patchen van prijslijst {suppl_name}..."):
-                resp = requests.patch(url, json=payload, headers=headers, timeout=180)
+        with st.expander("📋 Chunk resultaten"):
+            st.dataframe(pd.DataFrame(all_chunk_results), use_container_width=True, hide_index=True)
 
-            if resp.status_code in (200, 204):
-                st.success(f"🎉 Prijslijst **{suppl_name}** succesvol bijgewerkt met {len(subform_items)} artikelen!")
-            else:
-                st.error(f"❌ Fout bij bijwerken prijslijst: HTTP {resp.status_code}")
-                st.code(resp.text[:1500] if resp.text else "(geen body)")
+        return all_chunk_results, url, header_payload, subform_items
+
+    if spl_push_button:
+        chunk_results, url, header_payload, subform_items = run_suppricelist_patch()
 
         # Downloads
         st.subheader("📥 Download")
@@ -1806,7 +1872,12 @@ if 'final_result' in st.session_state:
         dcol1, dcol2 = st.columns(2)
 
         with dcol1:
-            payload_json = json.dumps(payload, indent=2, ensure_ascii=False)
+            import json
+            payload_json = json.dumps(
+                {"SPARTPRICE_SUBFORM": subform_items, **header_payload},
+                indent=2,
+                ensure_ascii=False
+            )
             st.download_button(
                 label="📥 Download payload (JSON)",
                 data=payload_json,
@@ -1837,25 +1908,15 @@ if 'final_result' in st.session_state:
         st.subheader("🔄 Opnieuw proberen")
 
         retry_spl = st.button(
-            "🔄 Retry patch (zelfde payload opnieuw versturen)",
+            "🔄 Retry patch (zelfde lijst opnieuw versturen)",
             type="secondary",
             use_container_width=True,
             key="retry_spl_patch"
         )
 
         if retry_spl:
-            if spl_dry_run:
-                st.info("Test mode staat aan; zet uit om echt te retryen.")
-            else:
-                headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
-                with st.spinner("Retry bezig..."):
-                    resp2 = requests.patch(url, json=payload, headers=headers, timeout=180)
-
-                if resp2.status_code in (200, 204):
-                    st.success("🎉 Retry succesvol!")
-                else:
-                    st.error(f"❌ Retry mislukt: HTTP {resp2.status_code}")
-                    st.code(resp2.text[:1500] if resp2.text else "(geen body)")
+            # Retry = gewoon dezelfde functie opnieuw aanroepen
+            run_suppricelist_patch()
     
     # ============================================
     # 5.8 RETRY BIJ FOUT
