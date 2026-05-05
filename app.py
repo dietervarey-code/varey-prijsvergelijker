@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 
+import requests
+import time
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 # ============================================
 # PAGINA CONFIGURATIE
 # ============================================
@@ -1058,102 +1063,175 @@ if 'final_result' in st.session_state:
     if push_button:
         import requests
         import time
-        
-        # Resultaten bijhouden
+        import urllib.parse
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Instellingen
+        BATCH_SIZE = 500
+        MAX_WORKERS = 8          # start met 8, verlaag bij errors/429
+        MAX_RETRIES = 3
+        REQUEST_TIMEOUT = 30
+
+        # Maak 1 herbruikbare session (sneller)
+        session = requests.Session()
+        session.headers.update({
+            "Authorization": PRIORITY_AUTH,
+            "Content-Type": "application/json"
+        })
+
+        def priority_patch_one(partname: str, final_price: float):
+            """
+            Patch 1 artikel in Priority.
+            Returns dict met status + error.
+            """
+            # URL encode PARTNAME
+            encoded_partname = urllib.parse.quote(str(partname).strip(), safe='')
+            url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
+            payload = {"BASEPLPRICE": float(final_price)}
+
+            last_error = None
+
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    resp = session.patch(url, json=payload, timeout=REQUEST_TIMEOUT)
+
+                    # Succes
+                    if resp.status_code in (200, 204):
+                        return {
+                            "partname": partname,
+                            "new_price": float(final_price),
+                            "status": "✅ Succes",
+                            "http_status": resp.status_code,
+                            "error": None
+                        }
+
+                    # Retry conditions
+                    if resp.status_code in (429, 500, 502, 503, 504):
+                        # probeer error detail te lezen
+                        try:
+                            j = resp.json()
+                            last_error = j.get("error", {}).get("message") or j.get("message") or resp.text[:200]
+                        except:
+                            last_error = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+
+                        # Exponential backoff + jitter
+                        sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
+                        time.sleep(sleep_s)
+                        continue
+
+                    # Niet-retryable error
+                    try:
+                        j = resp.json()
+                        err = j.get("error", {}).get("message") or j.get("message") or resp.text[:200]
+                    except:
+                        err = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+
+                    return {
+                        "partname": partname,
+                        "new_price": float(final_price),
+                        "status": "❌ Mislukt",
+                        "http_status": resp.status_code,
+                        "error": err
+                    }
+
+                except requests.exceptions.Timeout:
+                    last_error = "Timeout"
+                    sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
+                    time.sleep(sleep_s)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    last_error = str(e)
+                    sleep_s = (2 ** (attempt - 1)) + (0.05 * attempt)
+                    time.sleep(sleep_s)
+                    continue
+
+            # Als alle retries gefaald hebben
+            return {
+                "partname": partname,
+                "new_price": float(final_price),
+                "status": "❌ Mislukt (retries)",
+                "http_status": None,
+                "error": last_error
+            }
+
+        # Data voorbereiden (lijst van tuples) - sneller dan iterrows in threads
+        items = list(zip(
+            push_df[partname_col].astype(str).tolist(),
+            push_df['_final_price'].astype(float).tolist()
+        ))
+
+        total_items = len(items)
         results = []
         success_count = 0
         error_count = 0
-        
-        # Progress bar
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        # Verwerk artikelen
-        total_items = len(push_df)
-        
-        for idx, (_, row) in enumerate(push_df.iterrows()):
-            partname = str(row[partname_col]).strip()
-            final_price = row['_final_price']
-            
-            # Update progress
-            progress = (idx + 1) / total_items
-            progress_bar.progress(progress)
-            status_text.text(f"⏳ Verwerken: {idx + 1}/{total_items} - Artikel {partname}")
-            
-            if dry_run:
-                # Simuleer succes in test mode
+
+        # Helper om batches te maken
+        def chunks(lst, n):
+            for i in range(0, len(lst), n):
+                yield lst[i:i+n]
+
+        processed = 0
+
+        if dry_run:
+            # Simuleer (snel)
+            for partname, final_price in items:
                 results.append({
-                    'partname': partname,
-                    'new_price': final_price,
-                    'status': '✅ Succes (test mode)',
-                    'error': None
+                    "partname": partname,
+                    "new_price": float(final_price),
+                    "status": "✅ Succes (test mode)",
+                    "http_status": None,
+                    "error": None
                 })
-                success_count += 1
-                time.sleep(0.01)  # Kleine delay voor visuele feedback
-            else:
-                # Echte API call
-                try:
-                    # URL encode de PARTNAME voor veilige request
-                    import urllib.parse
-                    encoded_partname = urllib.parse.quote(partname, safe='')
-                    
-                    url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
-                    headers = {
-                        'Authorization': PRIORITY_AUTH,
-                        'Content-Type': 'application/json'
+            success_count = len(results)
+
+        else:
+            # Batch per 500 uitvoeren
+            for batch_idx, batch in enumerate(chunks(items, BATCH_SIZE), start=1):
+                batch_total = len(batch)
+                status_text.text(f"⏳ Batch {batch_idx} - {batch_total} artikelen (parallel: {MAX_WORKERS})")
+
+                # Parallel patchen
+                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                    future_map = {
+                        ex.submit(priority_patch_one, partname, price): (partname, price)
+                        for (partname, price) in batch
                     }
-                    payload = {
-                        'BASEPLPRICE': final_price
-                    }
-                    
-                    response = requests.patch(url, json=payload, headers=headers, timeout=30)
-                    
-                    if response.status_code in [200, 204]:
-                        results.append({
-                            'partname': partname,
-                            'new_price': final_price,
-                            'status': '✅ Succes',
-                            'error': None
-                        })
-                        success_count += 1
-                    else:
-                        error_msg = f"HTTP {response.status_code}"
-                        try:
-                            error_detail = response.json()
-                            if 'error' in error_detail:
-                                error_msg = error_detail['error'].get('message', error_msg)
-                        except:
-                            error_msg = response.text[:200] if response.text else error_msg
-                        
-                        results.append({
-                            'partname': partname,
-                            'new_price': final_price,
-                            'status': '❌ Mislukt',
-                            'error': error_msg
-                        })
-                        error_count += 1
-                
-                except requests.exceptions.Timeout:
-                    results.append({
-                        'partname': partname,
-                        'new_price': final_price,
-                        'status': '❌ Timeout',
-                        'error': 'Request timeout na 30 seconden'
-                    })
-                    error_count += 1
-                
-                except requests.exceptions.RequestException as e:
-                    results.append({
-                        'partname': partname,
-                        'new_price': final_price,
-                        'status': '❌ Fout',
-                        'error': str(e)
-                    })
-                    error_count += 1
-                
-                # Kleine delay om API niet te overbelasten
-                if (idx + 1) % BATCH_SIZE == 0:
-                    time.sleep(0.5)  # Halve seconde pauze per batch
+
+                    for fut in as_completed(future_map):
+                        res = fut.result()
+                        results.append(res)
+
+                        processed += 1
+                        if res["status"].startswith("✅"):
+                            success_count += 1
+                        else:
+                            error_count += 1
+
+                        # Progress updaten
+                        progress_bar.progress(processed / total_items)
+
+                        # Af en toe status updaten (niet bij elke record, scheelt UI overhead)
+                        if processed % 50 == 0 or processed == total_items:
+                            status_text.text(
+                                f"⏳ Verwerkt {processed}/{total_items} | ✅ {success_count} | ❌ {error_count}"
+                            )
+
+                # Kleine rust tussen batches (helpt tegen throttling)
+                time.sleep(0.2)
+
+        progress_bar.empty()
+        status_text.empty()
+
+        # Resultaten DataFrame
+        results_df = pd.DataFrame(results)
+
+        # Sla op voor retry
+        st.session_state['push_results'] = results_df
+        st.session_state['push_df_for_retry'] = push_df.copy()
+        st.session_state['partname_col_for_retry'] = partname_col
         
         # Verwijder progress indicators
         progress_bar.empty()
