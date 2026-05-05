@@ -1012,184 +1012,188 @@ if 'final_result' in st.session_state:
         dry_run = st.checkbox("🧪 Test mode", value=False, key="dry_run_priority")
 
     if push_button:
-    # ------------------------------------------------------------
-    # PARALLEL PUSH (batches van 500) + retries + session reuse
-    # ------------------------------------------------------------
-    BATCH_SIZE = 500
-    MAX_WORKERS = st.number_input("Parallel workers", min_value=1, max_value=16, value=6, step=1, help="Verlaag bij 429/504, verhoog als het stabiel blijft.")
-    MAX_RETRIES = 3
-    REQUEST_TIMEOUT = 60
-    SLEEP_BETWEEN_BATCHES = 0.5
+        # ------------------------------------------------------------
+        # PARALLEL PUSH (batches van 500) + retries + session reuse
+        # ------------------------------------------------------------
+        import requests
+        import time
+        import urllib.parse
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    # Resultaten
-    results = []
-    success_count = 0
-    error_count = 0
+        BATCH_SIZE = 500
+        MAX_WORKERS = st.number_input(
+            "Parallel workers",
+            min_value=1,
+            max_value=16,
+            value=6,
+            step=1,
+            help="Verlaag bij 429/504, verhoog als het stabiel blijft."
+        )
+        MAX_RETRIES = 3
+        REQUEST_TIMEOUT = 60
+        SLEEP_BETWEEN_BATCHES = 0.5
 
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+        # Resultaten
+        results = []
+        success_count = 0
+        error_count = 0
 
-    # Maak 1 herbruikbare session
-    session = requests.Session()
-    session.headers.update({
-        "Authorization": PRIORITY_AUTH,
-        "Content-Type": "application/json"
-    })
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-    def priority_patch_one(partname: str, final_price: float):
-        encoded_partname = urllib.parse.quote(str(partname).strip(), safe='')
-        url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
-        payload = {"BASEPLPRICE": float(final_price)}
+        # Maak 1 herbruikbare session
+        session = requests.Session()
+        session.headers.update({
+            "Authorization": PRIORITY_AUTH,
+            "Content-Type": "application/json"
+        })
 
-        last_error = None
+        def priority_patch_one(partname: str, final_price: float):
+            encoded_partname = urllib.parse.quote(str(partname).strip(), safe='')
+            url = f"{PRIORITY_BASE}LOGPART(PARTNAME='{encoded_partname}')"
+            payload = {"BASEPLPRICE": float(final_price)}
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                resp = session.patch(url, json=payload, timeout=REQUEST_TIMEOUT)
+            last_error = None
 
-                if resp.status_code in (200, 204):
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    resp = session.patch(url, json=payload, timeout=REQUEST_TIMEOUT)
+
+                    if resp.status_code in (200, 204):
+                        return {
+                            "partname": partname,
+                            "new_price": float(final_price),
+                            "status": "✅ Succes",
+                            "http_status": resp.status_code,
+                            "error": None
+                        }
+
+                    # retry op throttling / server errors
+                    if resp.status_code in (429, 500, 502, 503, 504):
+                        try:
+                            j = resp.json()
+                            last_error = j.get("error", {}).get("message") or j.get("message") or (resp.text[:200] if resp.text else f"HTTP {resp.status_code}")
+                        except:
+                            last_error = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+
+                        time.sleep((2 ** (attempt - 1)) + 0.1)
+                        continue
+
+                    # niet-retryable
+                    try:
+                        j = resp.json()
+                        err = j.get("error", {}).get("message") or j.get("message") or (resp.text[:200] if resp.text else f"HTTP {resp.status_code}")
+                    except:
+                        err = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+
                     return {
                         "partname": partname,
                         "new_price": float(final_price),
-                        "status": "✅ Succes",
+                        "status": "❌ Mislukt",
                         "http_status": resp.status_code,
-                        "error": None
+                        "error": err
                     }
 
-                # retry op throttling / server errors
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    try:
-                        j = resp.json()
-                        last_error = j.get("error", {}).get("message") or j.get("message") or (resp.text[:200] if resp.text else f"HTTP {resp.status_code}")
-                    except:
-                        last_error = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-
+                except requests.exceptions.Timeout:
+                    last_error = "Timeout"
+                    time.sleep((2 ** (attempt - 1)) + 0.1)
+                    continue
+                except requests.exceptions.RequestException as e:
+                    last_error = str(e)
                     time.sleep((2 ** (attempt - 1)) + 0.1)
                     continue
 
-                # niet-retryable
-                try:
-                    j = resp.json()
-                    err = j.get("error", {}).get("message") or j.get("message") or (resp.text[:200] if resp.text else f"HTTP {resp.status_code}")
-                except:
-                    err = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
-
-                return {
-                    "partname": partname,
-                    "new_price": float(final_price),
-                    "status": "❌ Mislukt",
-                    "http_status": resp.status_code,
-                    "error": err
-                }
-
-            except requests.exceptions.Timeout:
-                last_error = "Timeout"
-                time.sleep((2 ** (attempt - 1)) + 0.1)
-                continue
-            except requests.exceptions.RequestException as e:
-                last_error = str(e)
-                time.sleep((2 ** (attempt - 1)) + 0.1)
-                continue
-
-        return {
-            "partname": partname,
-            "new_price": float(final_price),
-            "status": "❌ Mislukt (retries)",
-            "http_status": None,
-            "error": last_error
-        }
-
-    # Data klaarzetten (veel sneller dan iterrows in threads)
-    items = list(zip(
-        push_df[partname_col].astype(str).tolist(),
-        push_df["_final_price"].astype(float).tolist()
-    ))
-
-    total_items = len(items)
-
-    def chunks(lst, n):
-        for i in range(0, len(lst), n):
-            yield lst[i:i+n]
-
-    processed = 0
-
-    if dry_run:
-        for partname, final_price in items:
-            results.append({
+            return {
                 "partname": partname,
                 "new_price": float(final_price),
-                "status": "✅ Succes (test mode)",
+                "status": "❌ Mislukt (retries)",
                 "http_status": None,
-                "error": None
-            })
-        success_count = len(results)
-    else:
-        batch_idx = 0
-        for batch in chunks(items, BATCH_SIZE):
-            batch_idx += 1
-            status_text.text(f"⏳ Batch {batch_idx} - {len(batch)} artikelen (parallel: {MAX_WORKERS})")
+                "error": last_error
+            }
 
-            with ThreadPoolExecutor(max_workers=int(MAX_WORKERS)) as ex:
-                futures = [ex.submit(priority_patch_one, p, pr) for (p, pr) in batch]
+        # Data klaarzetten (sneller dan iterrows in threads)
+        items = list(zip(
+            push_df[partname_col].astype(str).tolist(),
+            push_df["_final_price"].astype(float).tolist()
+        ))
+        total_items = len(items)
 
-                for fut in as_completed(futures):
-                    res = fut.result()
-                    results.append(res)
+        def chunks(lst, n):
+            for i in range(0, len(lst), n):
+                yield lst[i:i + n]
 
-                    processed += 1
-                    if res["status"].startswith("✅"):
-                        success_count += 1
-                    else:
-                        error_count += 1
+        processed = 0
 
-                    # progress bar
-                    progress_bar.progress(processed / total_items)
+        if dry_run:
+            for partname, final_price in items:
+                results.append({
+                    "partname": partname,
+                    "new_price": float(final_price),
+                    "status": "✅ Succes (test mode)",
+                    "http_status": None,
+                    "error": None
+                })
+            success_count = len(results)
 
-                    # niet élke record UI updaten (sneller)
-                    if processed % 100 == 0 or processed == total_items:
-                        status_text.text(f"⏳ Verwerkt {processed}/{total_items} | ✅ {success_count} | ❌ {error_count}")
+        else:
+            batch_idx = 0
+            for batch in chunks(items, BATCH_SIZE):
+                batch_idx += 1
+                status_text.text(f"⏳ Batch {batch_idx} - {len(batch)} artikelen (parallel: {int(MAX_WORKERS)})")
 
-            time.sleep(SLEEP_BETWEEN_BATCHES)
+                with ThreadPoolExecutor(max_workers=int(MAX_WORKERS)) as ex:
+                    futures = [ex.submit(priority_patch_one, p, pr) for (p, pr) in batch]
 
-    progress_bar.empty()
-    status_text.empty()
+                    for fut in as_completed(futures):
+                        res = fut.result()
+                        results.append(res)
 
-    # Resultaten DataFrame
-    results_df = pd.DataFrame(results)
+                        processed += 1
+                        if res["status"].startswith("✅"):
+                            success_count += 1
+                        else:
+                            error_count += 1
 
-    # Sla op in session_state (retry)
-    st.session_state["push_results"] = results_df
-    st.session_state["push_df_for_retry"] = push_df.copy()
-    st.session_state["partname_col_for_retry"] = partname_col
+                        progress_bar.progress(processed / total_items)
 
-    # ------------------------------
-    # Resultaten tonen (1x!)
-    # ------------------------------
-    st.subheader("📊 Push Resultaten")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("✅ Succesvol", success_count)
-    c2.metric("❌ Mislukt", error_count)
-    c3.metric("📊 Totaal", len(results))
+                        if processed % 100 == 0 or processed == total_items:
+                            status_text.text(f"⏳ Verwerkt {processed}/{total_items} | ✅ {success_count} | ❌ {error_count}")
 
-    if error_count > 0:
-        st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt. Zie details hieronder.")
-        failed_df = results_df[results_df["status"].str.contains("❌")]
-        st.dataframe(failed_df.head(2000), use_container_width=True, hide_index=True)
-    else:
-        st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt!")
+                time.sleep(SLEEP_BETWEEN_BATCHES)
 
-    with st.expander("📋 Bekijk alle resultaten"):
-        st.dataframe(results_df.head(5000), use_container_width=True, hide_index=True)
-        st.caption("Toont max 5000 rijen voor performance.")
+        progress_bar.empty()
+        status_text.empty()
 
-    # Download (unieke key)
-    st.download_button(
-        label="📥 Download resultaten (Excel)",
-        data=convert_to_excel(results_df),
-        file_name="priority_push_resultaten.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_push_results_main"
-    )
+        results_df = pd.DataFrame(results)
+        st.session_state["push_results"] = results_df
+        st.session_state["push_df_for_retry"] = push_df.copy()
+        st.session_state["partname_col_for_retry"] = partname_col
+
+        # Toon resultaten (1x)
+        st.subheader("📊 Push Resultaten")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("✅ Succesvol", success_count)
+        c2.metric("❌ Mislukt", error_count)
+        c3.metric("📊 Totaal", len(results))
+
+        if error_count > 0:
+            st.warning(f"⚠️ {error_count} artikelen zijn niet bijgewerkt.")
+            failed_df = results_df[results_df["status"].str.contains("❌")]
+            st.dataframe(failed_df.head(2000), use_container_width=True, hide_index=True)
+        else:
+            st.success(f"🎉 Alle {success_count} artikelen succesvol bijgewerkt!")
+
+        with st.expander("📋 Bekijk alle resultaten"):
+            st.dataframe(results_df.head(5000), use_container_width=True, hide_index=True)
+            st.caption("Toont max 5000 rijen voor performance.")
+
+        st.download_button(
+            label="📥 Download resultaten (Excel)",
+            data=convert_to_excel(results_df),
+            file_name="priority_push_resultaten.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_push_results_main"
+        )
     
     # ============================================
     # 4.8 RETRY MISLUKTE ITEMS
