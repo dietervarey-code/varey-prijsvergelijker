@@ -1873,8 +1873,22 @@ if 'final_result' in st.session_state:
         import time as _time
 
         headers = {"Authorization": PRIORITY_AUTH, "Content-Type": "application/json"}
+
         formatted_date = format_date_for_priority(suppl_date)
-        url = f"{PRIORITY_BASE}SUPPRICELIST(SUPPLNAME='{suppl_name}',SUPPLDATE={formatted_date})"
+
+        encoded_suppl_name = urllib.parse.quote(str(suppl_name).strip(), safe='')
+        encoded_sup_name = urllib.parse.quote(str(sup_name).strip(), safe='')
+        encoded_currency_code = urllib.parse.quote(str(currency_code).strip(), safe='')
+
+        url = (
+            f"{PRIORITY_BASE}"
+            f"SUPPRICELIST("
+            f"SUPPLNAME='{encoded_suppl_name}',"
+            f"SUPNAME='{encoded_sup_name}',"
+            f"SUPPLDATE={formatted_date},"
+            f"CODE='{encoded_currency_code}'"
+            f")"
+        )
 
         all_chunk_results = []
         failed = False
@@ -1913,6 +1927,13 @@ if 'final_result' in st.session_state:
                     chunk_payload = {"SPARTPRICE_SUBFORM": sub_items_chunk}
 
                 status.text(f"⏳ Chunk {idx}/{chunk_count} - items {len(sub_items_chunk)}")
+
+                with st.expander(f"🔧 Debug chunk {idx}", expanded=(idx == 1)):
+                    st.write("PATCH URL:")
+                    st.code(url)
+
+                    st.write("Payload preview:")
+                    st.json(chunk_payload)
 
                 try:
                     resp = requests.patch(
@@ -1957,8 +1978,13 @@ if 'final_result' in st.session_state:
                 if not ok:
                     failed = True
                     st.error(f"❌ Chunk {idx} mislukt: HTTP {resp.status_code}")
-                    if resp.text:
-                        st.code(resp.text[:1500])
+
+                    st.write("Response headers:")
+                    st.json(dict(resp.headers))
+
+                    st.write("Response text:")
+                    st.code(resp.text[:5000] if resp.text else "Geen response body")
+
                     break
 
                 progress.progress(idx / max(chunk_count, 1))
