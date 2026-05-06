@@ -1877,12 +1877,13 @@ if 'final_result' in st.session_state:
         formatted_date = format_date_for_priority(suppl_date)
 
         encoded_suppl_name = urllib.parse.quote(str(suppl_name).strip(), safe='')
+        encoded_suppl_date = urllib.parse.quote(str(formatted_date), safe='')
 
         url = (
             f"{PRIORITY_BASE}"
             f"SUPPRICELIST("
             f"SUPPLNAME='{encoded_suppl_name}',"
-            f"SUPPLDATE={formatted_date}"
+            f"SUPPLDATE={encoded_suppl_date}"
             f")"
         )
 
@@ -1979,7 +1980,11 @@ if 'final_result' in st.session_state:
                     st.json(dict(resp.headers))
 
                     st.write("Response text:")
-                    st.code(resp.text[:5000] if resp.text else "Geen response body")
+                    st.text_area(
+                        "Priority foutmelding",
+                        resp.text if resp.text else "Geen response body",
+                        height=400
+                    )
 
                     break
 
