@@ -1877,16 +1877,12 @@ if 'final_result' in st.session_state:
         formatted_date = format_date_for_priority(suppl_date)
 
         encoded_suppl_name = urllib.parse.quote(str(suppl_name).strip(), safe='')
-        encoded_sup_name = urllib.parse.quote(str(sup_name).strip(), safe='')
-        encoded_currency_code = urllib.parse.quote(str(currency_code).strip(), safe='')
 
         url = (
             f"{PRIORITY_BASE}"
             f"SUPPRICELIST("
             f"SUPPLNAME='{encoded_suppl_name}',"
-            f"SUPNAME='{encoded_sup_name}',"
-            f"SUPPLDATE={formatted_date},"
-            f"CODE='{encoded_currency_code}'"
+            f"SUPPLDATE={formatted_date}"
             f")"
         )
 
