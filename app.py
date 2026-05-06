@@ -213,6 +213,15 @@ def convert_to_csv(df):
     """Converteer DataFrame naar CSV voor download"""
     return df.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
 
+def unique_list(items):
+    result = []
+
+    for item in items:
+        if item not in result:
+            result.append(item)
+
+    return result
+
 # ============================================
 # STAP 1: BESTANDEN UPLOADEN
 # ============================================
@@ -695,26 +704,26 @@ if 'final_result' in st.session_state:
     with col2:
         supplier_not_found = st.session_state.get('supplier_not_found')
 
-    if supplier_not_found is None:
-        st.info("Niet-gematchte lijst niet beschikbaar (dataset te groot).")
-    else:
-        st.metric("Leverancier artikelen niet bij ons", len(supplier_not_found))
+        if supplier_not_found is None:
+            st.info("Niet-gematchte lijst niet beschikbaar (dataset te groot).")
+        else:
+            st.metric("Leverancier artikelen niet bij ons", len(supplier_not_found))
 
-        if len(supplier_not_found) > 0:
-            with st.expander("👀 Bekijk lijst"):
-                st.dataframe(
-                    supplier_not_found.head(20),
-                    use_container_width=True,
-                    hide_index=True
+            if len(supplier_not_found) > 0:
+                with st.expander("👀 Bekijk lijst"):
+                    st.dataframe(
+                        supplier_not_found.head(20),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                st.download_button(
+                    label="📥 Export: Leverancier artikelen NIET bij ons",
+                    data=convert_to_excel(supplier_not_found),
+                    file_name="leverancier_artikelen_niet_bij_ons.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_supplier_not_found"
                 )
-
-            st.download_button(
-                label="📥 Export: Leverancier artikelen NIET bij ons",
-                data=convert_to_excel(supplier_not_found),
-                file_name="leverancier_artikelen_niet_bij_ons.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_supplier_not_found"
-            )
 
     # ============================================
     # STAP 4: PUSH NAAR PRIORITY
@@ -967,12 +976,17 @@ if 'final_result' in st.session_state:
     st.subheader("👁️ Preview")
 
     preview_cols = [priority_id_col, partname_col]
+
     for col in extra_preview_cols:
-        if col in push_df.columns and col not in preview_cols:
+        if col in push_df.columns:
             preview_cols.append(col)
+
     preview_cols += [new_price_col, '_final_price', status_col]
 
-    preview_df = push_df[preview_cols].copy().rename(columns={'_final_price': 'Finale prijs'})
+    preview_cols = unique_list(preview_cols)
+
+    preview_df = push_df[preview_cols].copy()
+    preview_df = preview_df.rename(columns={'_final_price': 'Finale prijs'})
 
     st.dataframe(
         preview_df.head(50),
@@ -1292,6 +1306,9 @@ if 'final_result' in st.session_state:
                 retry_results = []
                 retry_success = 0
                 retry_error = 0
+
+                retry_progress = st.progress(0)
+                retry_status = st.empty()
 
                 def chunks(lst, n):
                     for i in range(0, len(lst), n):
@@ -1725,13 +1742,17 @@ if 'final_result' in st.session_state:
     st.subheader("👁️ Preview")
 
     preview_cols = [spl_partname_col, 'priority_id'] + spl_extra_preview_cols + ['_quant', '_price']
+
     if discount_mode != "❌ Geen kortingen (alleen prijs)":
         preview_cols += ['_disc1', '_disc2', '_disc3']
+
     preview_cols += [status_col]
 
     preview_cols = [c for c in preview_cols if c in spl_push_df.columns]
+    preview_cols = unique_list(preview_cols)
 
-    preview_df = spl_push_df[preview_cols].copy().rename(columns={
+    preview_df = spl_push_df[preview_cols].copy()
+    preview_df = preview_df.rename(columns={
         '_quant': 'Aantal',
         '_price': 'Prijs',
         '_disc1': 'Korting 1 (%)',
@@ -1739,7 +1760,11 @@ if 'final_result' in st.session_state:
         '_disc3': 'Korting 3 (%)'
     })
 
-    st.dataframe(preview_df.head(50), use_container_width=True, hide_index=True)
+    st.dataframe(
+        preview_df.head(50),
+        use_container_width=True,
+        hide_index=True
+    )
 
     if len(spl_push_df) > 50:
         st.caption(f"... en {len(spl_push_df) - 50} meer artikelen")
