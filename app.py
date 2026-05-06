@@ -1974,19 +1974,75 @@ if 'final_result' in st.session_state:
 
                 if not ok:
                     failed = True
-                    st.error(f"❌ Chunk {idx} mislukt: HTTP {resp.status_code}")
+                    st.warning(f"⚠️ Chunk {idx} mislukt: HTTP {resp.status_code}. Ik probeer deze chunk nu artikel per artikel.")
 
                     st.write("Response headers:")
                     st.json(dict(resp.headers))
 
                     st.write("Response text:")
                     st.text_area(
-                        "Priority foutmelding",
+                        "Priority foutmelding chunk",
                         resp.text if resp.text else "Geen response body",
                         height=400
                     )
 
-                    break
+                    for item_idx, single_item in enumerate(sub_items_chunk, start=1):
+                        single_payload = {
+                            "SPARTPRICE_SUBFORM": [single_item]
+                        }
+
+                        try:
+                            single_resp = requests.patch(
+                                url,
+                                json=single_payload,
+                                headers=headers,
+                                timeout=int(TIMEOUT_SECONDS)
+                            )
+
+                            single_ok = single_resp.status_code in (200, 204)
+
+                            all_chunk_results.append({
+                                "chunk": idx,
+                                "items": 1,
+                                "partname": single_item.get("PARTNAME"),
+                                "price": single_item.get("PRICE"),
+                                "http_status": single_resp.status_code,
+                                "ok": single_ok,
+                                "response_preview": single_resp.text[:500] if single_resp.text else ""
+                            })
+
+                            if not single_ok:
+                                st.error(
+                                    f"❌ Artikel niet gepatcht: "
+                                    f"{single_item.get('PARTNAME')} - HTTP {single_resp.status_code}"
+                                )
+
+                        except requests.exceptions.Timeout:
+                            all_chunk_results.append({
+                                "chunk": idx,
+                                "items": 1,
+                                "partname": single_item.get("PARTNAME"),
+                                "price": single_item.get("PRICE"),
+                                "http_status": "TIMEOUT",
+                                "ok": False,
+                                "response_preview": "Timeout"
+                            })
+
+                        except requests.exceptions.RequestException as e:
+                            all_chunk_results.append({
+                                "chunk": idx,
+                                "items": 1,
+                                "partname": single_item.get("PARTNAME"),
+                                "price": single_item.get("PRICE"),
+                                "http_status": "REQUEST_ERROR",
+                                "ok": False,
+                                "response_preview": str(e)[:500]
+                            })
+
+                    progress.progress(idx / max(chunk_count, 1))
+                    _time.sleep(float(SLEEP_BETWEEN))
+
+                    continue
 
                 progress.progress(idx / max(chunk_count, 1))
                 _time.sleep(float(SLEEP_BETWEEN))
@@ -2004,8 +2060,23 @@ if 'final_result' in st.session_state:
         st.session_state["spl_last_chunk_results"] = all_chunk_results
         st.session_state["spl_last_failed"] = failed
 
+        results_table = pd.DataFrame(all_chunk_results)
+
         st.write("📦 Chunk resultaten:")
-        st.dataframe(pd.DataFrame(all_chunk_results), use_container_width=True, hide_index=True)
+        st.dataframe(results_table, use_container_width=True, hide_index=True)
+
+        failed_articles = results_table[results_table["ok"] == False].copy()
+
+        if len(failed_articles) > 0:
+            st.warning(f"⚠️ {len(failed_articles)} artikelen konden niet gepatcht worden.")
+
+            st.download_button(
+                "📥 Download niet-gepatchte artikelen (Excel)",
+                data=convert_to_excel(failed_articles),
+                file_name=f"niet_gepatchte_artikelen_{suppl_name}_{suppl_date.strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_failed_spl_articles"
+            )
 
         if not failed:
             st.success(f"🎉 Prijslijst **{suppl_name}** succesvol gepatcht in {len(all_chunk_results)} chunks.")
